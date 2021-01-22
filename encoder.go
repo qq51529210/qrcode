@@ -1,33 +1,37 @@
 package qrcode
 
 import (
-	"fmt"
 	"io"
 	"strconv"
-	"unicode"
+)
+
+var (
+	encFunc = [maxMode]func(*encoder){
+		encNumeric, encAlphanumeric, encByte, encKanJi,
+	} // 编码函数
 )
 
 type encoder struct {
-	str   string // 原始字符串
-	ver   int    // 选择的版本
-	buf   []byte // 数据
-	bit   int    // buf最后一个字节的bit的数量
-	mode         // 选择的模式
-	level        // 纠错级别
+	str     string // 原始字符串
+	buf     []byte // 数据
+	bit     int    // buf最后一个字节的bit的数量
+	level          // 纠错级别
+	mode           // 选择的模式
+	version        // 版本
 }
 
-func (enc *encoder) Encode(writer io.Writer, str string, level level) error {
-	enc.str = str
-	enc.level = level
+func (enc *encoder) Encode(writer io.Writer, str string, level level) (err error) {
 	// 确定编码模式
-	enc.analysisMode()
+	enc.mode = analysisMode(str)
 	// 确定最小版本
-	err := enc.analysisVersion()
+	enc.version, err = analysisVersion(level, enc.mode, str)
 	if err != nil {
 		return err
 	}
 	// 数据
 	enc.buf = enc.buf[:0]
+	enc.str = str
+	enc.level = level
 	// 指示器
 	enc.buf = append(enc.buf, enc.mode.Indicator())
 	enc.bit = 4
@@ -37,46 +41,10 @@ func (enc *encoder) Encode(writer io.Writer, str string, level level) error {
 	encFunc[enc.mode](enc)
 	enc.growBuff()
 	// 纠错
-	enc.correction()
+	enc.ec()
 	// 输出结果
 	_, err = writer.Write(enc.buf)
 	return err
-}
-
-// 判断编码模式
-func (enc *encoder) analysisMode() {
-	enc.mode = numericMode
-	for _, c := range enc.str {
-		if unicode.MaxLatin1 < c {
-			if (c >= 0x8140 && c <= 0x9FFC) || (c >= 0xE040 && c <= 0xEBBF) {
-				enc.mode = kanJiMode
-			} else {
-				enc.mode = byteMode
-				return
-			}
-		} else {
-			if alphanumericTable[c] != 0 {
-				enc.mode = alphanumericMode
-			} else {
-				if numericTable[c] != 0 {
-					enc.mode = byteMode
-					return
-				}
-			}
-		}
-	}
-}
-
-// 判断编码版本
-func (enc *encoder) analysisVersion() error {
-	for i, a := range levelModeVersionCapacity[enc.level][enc.mode] {
-		if len(enc.str) <= a {
-			enc.ver = i
-			return nil
-		}
-	}
-	return fmt.Errorf("string length <%d> too lager with level <%v> mode <%v>",
-		len(enc.str), enc.level, enc.mode)
 }
 
 // 追加多少位，n是小端模式的字节，nBit表示位数
@@ -106,9 +74,9 @@ func (enc *encoder) encLength() {
 	// v1-9，10，9，8，8
 	// v10-26，12，11，16，10
 	// v27-40，14，13，16，12
-	if enc.ver >= 0 && enc.ver <= 8 {
+	if enc.version >= 0 && enc.version <= 8 {
 
-	} else if enc.ver >= 9 && enc.ver <= 25 {
+	} else if enc.version >= 9 && enc.version <= 25 {
 
 	} else {
 
@@ -119,11 +87,11 @@ func (enc *encoder) encLength() {
 // 调整编码的数据大小
 func (enc *encoder) growBuff() {
 	for {
-		if len(enc.buf) >= versionErrorCorrectionTable[enc.ver][enc.mode].TotalBytes {
+		if len(enc.buf) >= versionECTable[enc.version][enc.mode].TotalBytes {
 			return
 		}
 		enc.buf = append(enc.buf, 236)
-		if len(enc.buf) >= versionErrorCorrectionTable[enc.ver][enc.mode].TotalBytes {
+		if len(enc.buf) >= versionECTable[enc.version][enc.mode].TotalBytes {
 			return
 		}
 		enc.buf = append(enc.buf, 17)
@@ -131,7 +99,7 @@ func (enc *encoder) growBuff() {
 }
 
 // 纠错
-func (enc *encoder) correction() {
+func (enc *encoder) ec() {
 
 }
 
@@ -167,7 +135,7 @@ func encAlphanumeric(enc *encoder) {
 	i1, i2 := 0, 1
 	var n uint16
 	for i2 < len(enc.str) {
-		n = uint16(alphanumericTable[enc.str[i1]])*45 + uint16(alphanumericTable[enc.str[i2]])
+		n = uint16(alphanumericModeTable[enc.str[i1]])*45 + uint16(alphanumericModeTable[enc.str[i2]])
 		enc.append(byte(n>>8), 3)
 		enc.append(byte(n), 8)
 		i1 += 2
@@ -175,7 +143,7 @@ func encAlphanumeric(enc *encoder) {
 	}
 	// 如果1个字符，6bit
 	if i1 < len(enc.str) {
-		enc.append(alphanumericTable[enc.str[i1]], 6)
+		enc.append(alphanumericModeTable[enc.str[i1]], 6)
 	}
 }
 
