@@ -1,17 +1,17 @@
 package qrcode
 
 // 纠错等级
-type level int
+type Level int
 
-func (l level) String() string {
+func (l Level) String() string {
 	switch l {
-	case levelL:
+	case LevelL:
 		return "L"
-	case levelM:
+	case LevelM:
 		return "M"
-	case levelQ:
+	case LevelQ:
 		return "Q"
-	case levelH:
+	case LevelH:
 		return "H"
 	default:
 		panic("code bug")
@@ -19,9 +19,9 @@ func (l level) String() string {
 }
 
 const (
-	levelL level = iota // 7%
-	levelM              // 15%
-	levelQ              // 25％
-	levelH              // 30％
+	LevelL Level = iota // 7%
+	LevelM              // 15%
+	LevelQ              // 25％
+	LevelH              // 30％
 	maxLevel
 )

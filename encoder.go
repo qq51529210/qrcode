@@ -1,8 +1,8 @@
 package qrcode
 
 import (
-	"io"
-	"strconv"
+	"fmt"
+	"unicode"
 )
 
 var (
@@ -13,118 +13,192 @@ var (
 
 type encoder struct {
 	str     string // 原始字符串
-	buf     []byte // 数据
-	bit     int    // buf最后一个字节的bit的数量
-	level          // 纠错级别
+	bit            // 编码数据
+	Level          // 纠错级别
 	mode           // 选择的模式
 	version        // 版本
 }
 
-func (enc *encoder) Encode(writer io.Writer, str string, level level) (err error) {
+// 编码
+func (enc *encoder) Encode() error {
 	// 确定编码模式
-	enc.mode = analysisMode(str)
+	enc.Mode()
 	// 确定最小版本
-	enc.version, err = analysisVersion(level, enc.mode, str)
+	err := enc.Version()
 	if err != nil {
 		return err
 	}
 	// 数据
-	enc.buf = enc.buf[:0]
-	enc.str = str
-	enc.level = level
+	enc.bit.Reset()
 	// 指示器
-	enc.buf = append(enc.buf, enc.mode.Indicator())
-	enc.bit = 4
+	enc.Indicator()
 	// 字符串长度
-	enc.encLength()
+	enc.Length()
 	// 编码
 	encFunc[enc.mode](enc)
-	enc.growBuff()
+	// 填充
+	enc.AddPadBytes()
 	// 纠错
-	enc.ec()
-	// 输出结果
-	_, err = writer.Write(enc.buf)
-	return err
+	enc.EC()
+	return nil
 }
 
-// 追加多少位，n是小端模式的字节，nBit表示位数
-func (enc *encoder) append(n byte, nBit int) {
-	m := 8 - enc.bit
-	if nBit < m {
-		enc.buf[len(enc.buf)-1] |= n<<m - nBit
-		enc.bit += nBit
-		return
+// 判断编码模式
+func (enc *encoder) Mode() {
+	enc.mode = numericMode
+	for _, c := range enc.str {
+		if unicode.MaxLatin1 < c {
+			if (c >= 0x8140 && c <= 0x9FFC) || (c >= 0xE040 && c <= 0xEBBF) {
+				enc.mode = kanJiMode
+			} else {
+				enc.mode = byteMode
+				return
+			}
+		} else {
+			if c >= '0' && c <= '9' {
+				continue
+			}
+			if alphanumericTable[c] != 0 {
+				if enc.mode < alphanumericMode {
+					enc.mode = alphanumericMode
+				}
+			} else {
+				enc.mode = byteMode
+				return
+			}
+		}
 	}
-	if nBit == m {
-		enc.buf[len(enc.buf)-1] |= n
-		enc.buf = append(enc.buf, 0)
-		enc.bit = 0
-		return
+}
+
+// 判断编码版本
+func (enc *encoder) Version() error {
+	for i, a := range versionCapacity[enc.Level][enc.mode] {
+		if len(enc.str) <= a {
+			enc.version = version(i)
+			return nil
+		}
 	}
-	m = nBit - m
-	enc.buf[len(enc.buf)-1] |= n >> m
-	enc.buf = append(enc.buf, 0)
-	enc.buf[len(enc.buf)-1] |= n << enc.bit
-	enc.bit = m
+	return fmt.Errorf("string length <%d> too lager", len(enc.str))
+}
+
+// 编码指示器
+func (enc *encoder) Indicator() {
+	enc.bit.b[0] = modeIndicator[enc.mode]
+	enc.bit.n = 4
 }
 
 // 编码字符串长度
-func (enc *encoder) encLength() {
-	//n := len(enc.str)
-	// v1-9，10，9，8，8
-	// v10-26，12，11，16，10
-	// v27-40，14，13，16，12
+func (enc *encoder) Length() {
+	n := uint16(len(enc.str))
 	if enc.version >= 0 && enc.version <= 8 {
-
+		// v1-9，10，9，8，8
+		switch enc.mode {
+		case numericMode:
+			enc.bit.Append(byte(n>>8), 2)
+			enc.bit.Append(byte(n), 8)
+		case alphanumericMode:
+			enc.bit.Append(byte(n>>8), 1)
+			enc.bit.Append(byte(n), 8)
+		case byteMode:
+			enc.bit.Append(byte(n), 8)
+		case kanJiMode:
+			enc.bit.Append(byte(n), 8)
+		}
 	} else if enc.version >= 9 && enc.version <= 25 {
-
+		// v10-26，12，11，16，10
+		switch enc.mode {
+		case numericMode:
+			enc.bit.Append(byte(n>>8), 4)
+			enc.bit.Append(byte(n), 8)
+		case alphanumericMode:
+			enc.bit.Append(byte(n>>8), 3)
+			enc.bit.Append(byte(n), 8)
+		case byteMode:
+			enc.bit.Append(byte(n>>8), 8)
+			enc.bit.Append(byte(n), 8)
+		case kanJiMode:
+			enc.bit.Append(byte(n>>8), 2)
+			enc.bit.Append(byte(n), 8)
+		}
 	} else {
-
+		// v27-40，14，13，16，12
+		switch enc.mode {
+		case numericMode:
+			enc.bit.Append(byte(n>>8), 6)
+			enc.bit.Append(byte(n), 8)
+		case alphanumericMode:
+			enc.bit.Append(byte(n>>8), 5)
+			enc.bit.Append(byte(n), 8)
+		case byteMode:
+			enc.bit.Append(byte(n>>8), 8)
+			enc.bit.Append(byte(n), 8)
+		case kanJiMode:
+			enc.bit.Append(byte(n>>8), 4)
+			enc.bit.Append(byte(n), 8)
+		}
 	}
-	encFunc[enc.mode](enc)
 }
 
 // 调整编码的数据大小
-func (enc *encoder) growBuff() {
-	for {
-		if len(enc.buf) >= versionECTable[enc.version][enc.mode].TotalBytes {
-			return
+func (enc *encoder) AddPadBytes() {
+	n := versionECTable[enc.version][enc.Level].TotalBytes
+	// 最多只能补4个0
+	if enc.bit.n < 4 {
+		for {
+			if len(enc.bit.b) >= n {
+				return
+			}
+			enc.bit.Append(236, 8)
+			if len(enc.bit.b) >= n {
+				return
+			}
+			enc.bit.Append(17, 8)
 		}
-		enc.buf = append(enc.buf, 236)
-		if len(enc.buf) >= versionECTable[enc.version][enc.mode].TotalBytes {
-			return
+	} else {
+		for {
+			if len(enc.bit.b) >= n {
+				return
+			}
+			enc.bit.b = append(enc.bit.b, 236)
+			if len(enc.bit.b) >= n {
+				return
+			}
+			enc.bit.b = append(enc.bit.b, 17)
 		}
-		enc.buf = append(enc.buf, 17)
 	}
 }
 
 // 纠错
-func (enc *encoder) ec() {
+func (enc *encoder) EC() {
 
 }
 
 // 数字模式编码
 func encNumeric(enc *encoder) {
 	// 将字符分组，3个（10bit），2个（7bit），1个（4bit）
-	i1, i2 := 0, 3
-	var n int64
-	for i2 < len(enc.str) {
-		n, _ = strconv.ParseInt(enc.str[i1:i2], 10, 64)
-		enc.append(byte(n>>8), 2)
-		enc.append(byte(n), 8)
-		i1 = i2
-		i2 += 3
-	}
-	if i1 < len(enc.str) {
-		n, _ = strconv.ParseInt(enc.str[i1:], 10, 64)
-		switch len(enc.str[i1:]) {
+	i := 0
+	var n int16
+	for i < len(enc.str) {
+		switch len(enc.str[i:]) {
 		case 1:
-			enc.append(byte(n), 4)
+			n = int16(enc.str[i] - '0')
+			i++
+			enc.bit.Append(byte(n), 4)
 		case 2:
-			enc.append(byte(n), 7)
+			n = int16(enc.str[i]-'0') * 10
+			i++
+			n += int16(enc.str[i] - '0')
+			i++
+			enc.bit.Append(byte(n), 7)
 		default:
-			enc.append(byte(n>>8), 2)
-			enc.append(byte(n), 8)
+			n = int16(enc.str[i]-'0') * 100
+			i++
+			n += int16(enc.str[i]-'0') * 10
+			i++
+			n += int16(enc.str[i] - '0')
+			i++
+			enc.bit.Append(byte(n>>8), 2)
+			enc.bit.Append(byte(n), 8)
 		}
 	}
 }
@@ -135,22 +209,22 @@ func encAlphanumeric(enc *encoder) {
 	i1, i2 := 0, 1
 	var n uint16
 	for i2 < len(enc.str) {
-		n = uint16(alphanumericModeTable[enc.str[i1]])*45 + uint16(alphanumericModeTable[enc.str[i2]])
-		enc.append(byte(n>>8), 3)
-		enc.append(byte(n), 8)
+		n = uint16(alphanumericTable[enc.str[i1]])*45 + uint16(alphanumericTable[enc.str[i2]])
+		enc.bit.Append(byte(n>>8), 3)
+		enc.bit.Append(byte(n), 8)
 		i1 += 2
 		i2 += 2
 	}
 	// 如果1个字符，6bit
 	if i1 < len(enc.str) {
-		enc.append(alphanumericModeTable[enc.str[i1]], 6)
+		enc.bit.Append(alphanumericTable[enc.str[i1]], 6)
 	}
 }
 
 // 字节模式编码
 func encByte(enc *encoder) {
 	for _, c := range enc.str {
-		enc.append(byte(c), 8)
+		enc.bit.Append(byte(c), 8)
 	}
 }
 
@@ -167,7 +241,7 @@ func encKanJi(enc *encoder) {
 		}
 		// 结果（高字节*0xC0+低字节）是一个13bit的数
 		m = uint16(c>>8)*0xC0 + uint16(c)
-		enc.append(byte(m>>8), 5)
-		enc.append(byte(m), 8)
+		enc.bit.Append(byte(m>>8), 5)
+		enc.bit.Append(byte(m), 8)
 	}
 }

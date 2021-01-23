@@ -1,7 +1,5 @@
 package qrcode
 
-import "fmt"
-
 const (
 	maxVersion = 40
 )
@@ -367,13 +365,3 @@ type ecTable struct {
 }
 
 type version int
-
-// 判断编码版本
-func analysisVersion(level level, mode mode, str string) (version, error) {
-	for i, a := range versionCapacity[level][mode] {
-		if len(str) <= a {
-			return version(i), nil
-		}
-	}
-	return 0, fmt.Errorf("string length <%d> too lager", len(str))
-}
