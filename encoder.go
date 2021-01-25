@@ -12,11 +12,12 @@ var (
 )
 
 type encoder struct {
-	str     string // 原始字符串
-	bit            // 编码数据
-	Level          // 纠错级别
-	mode           // 选择的模式
-	version        // 版本
+	str        string // 原始字符串
+	Level             // 纠错级别
+	mode              // 选择的模式
+	version           // 版本
+	bit               // 编码数据
+	galoisPoly        // 纠错多项式
 }
 
 // 编码
@@ -141,36 +142,26 @@ func (enc *encoder) Length() {
 
 // 调整编码的数据大小
 func (enc *encoder) AddPadBytes() {
-	n := versionECTable[enc.version][enc.Level].TotalBytes
-	// 最多只能补4个0
-	if enc.bit.n < 4 {
-		for {
-			if len(enc.bit.b) >= n {
-				return
-			}
-			enc.bit.Append(236, 8)
-			if len(enc.bit.b) >= n {
-				return
-			}
-			enc.bit.Append(17, 8)
+	if len(enc.bit.b) < versionECTable[enc.version][enc.Level].TotalBytes-1 {
+		if enc.bit.n > 4 {
+			enc.bit.b = append(enc.bit.b, 0)
 		}
-	} else {
-		for {
-			if len(enc.bit.b) >= n {
-				return
-			}
-			enc.bit.b = append(enc.bit.b, 236)
-			if len(enc.bit.b) >= n {
-				return
-			}
-			enc.bit.b = append(enc.bit.b, 17)
+	}
+	for {
+		if len(enc.bit.b) >= versionECTable[enc.version][enc.Level].TotalBytes {
+			return
 		}
+		enc.bit.b = append(enc.bit.b, 236)
+		if len(enc.bit.b) >= versionECTable[enc.version][enc.Level].TotalBytes {
+			return
+		}
+		enc.bit.b = append(enc.bit.b, 17)
 	}
 }
 
 // 纠错
 func (enc *encoder) EC() {
-
+	enc.galoisPoly.Encode(enc.bit.Bytes(), versionECTable[enc.version][enc.Level].BlockBytes)
 }
 
 // 数字模式编码

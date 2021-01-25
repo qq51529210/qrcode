@@ -58,60 +58,61 @@ var (
 		108, 216, 173, 71, 142, 1}
 )
 
-func galoisAdd(i1, i2 byte) byte {
-	return i1 ^ i2
+type galoisPoly struct {
+	b []byte // 多项式生成过程的缓存
+	d []byte // 多项式生成过程的缓存
 }
 
-func galoisMul(i1, i2 byte) byte {
-	if i1 == 0 || i2 == 0 {
-		return 0
-	}
-	return galoisExpTable[(galoisLogTable[i1]+galoisLogTable[i2])%255]
-}
-
-func galoisDiv(i1, i2 byte) byte {
-	if i1 == 0 {
-		return 0
-	}
-	return galoisExpTable[(galoisLogTable[i1]+255-galoisLogTable[i2])%255]
-}
-
-func galoisPolyAdd(buf, d1, d2 []byte) []byte {
-	buf = resetBuffer(buf, d1, d2)
-	for i := 0; i < len(d1); i++ {
-		buf[i+len(buf)-len(d1)] = d1[i]
-	}
-	for i := 0; i < len(d2); i++ {
-		buf[i+len(buf)-len(d2)] ^= d2[i]
-	}
-	return buf
-}
-
-func galoisPolyMul(buf, d1, d2 []byte) []byte {
-	buf = resetBuffer(buf, d1, d2)
-	for i := 0; i < len(d1); i++ {
-		for j := 0; j < len(d2); j++ {
-			buf[i+j] ^= galoisMul(d1[i], d2[j])
+func (g *galoisPoly) Mul(p []byte) {
+	g.b = resetBytes(g.b, len(g.d)+len(p)-1)
+	for i := 0; i < len(p); i++ {
+		for j := 0; j < len(g.d); j++ {
+			if g.d[j] == 0 || p[i] == 0 {
+				g.b[i+j] ^= 0
+			} else {
+				g.b[i+j] ^= galoisExpTable[(int(galoisLogTable[g.d[j]])+int(galoisLogTable[p[i]]))%255]
+			}
 		}
 	}
-	return buf
+	g.swap()
 }
 
-func resetBuffer(buf, d1, d2 []byte) []byte {
-	n := len(d1) + len(d2)
-	if cap(buf) < n {
-		buf = make([]byte, 0, n)
-	} else {
-		buf = buf[:n]
-	}
-	return buf
-}
-
-func genGaloisPoly(buf []byte, ecBytes int) []byte {
-	a := [2]byte{1, 0}
-	for i := 0; i < ecBytes; i++ {
+func (g *galoisPoly) Gen(n int) {
+	g.d = resetBytes(g.d, 1)
+	g.d[0] = 1
+	a := []byte{1, 0}
+	for i := 0; i < n; i++ {
 		a[1] = galoisExpTable[i]
-		buf = galoisPolyMul(buf, buf, a[:2])
+		g.Mul(a[:])
 	}
-	return buf
+}
+
+func (g *galoisPoly) Encode(b []byte, n int) {
+	// 生成多项式
+	g.Gen(n)
+	// 求余
+	g.b = resetBytes(g.b, len(b)+len(g.d)-1)
+	copy(g.b, b)
+	var c byte
+	for i := 0; i < len(b); i++ {
+		if g.b[i] == 0 {
+			continue
+		}
+		c = g.b[i]
+		for j := 1; j < len(g.d); j++ {
+			if g.d[j] == 0 || c == 0 {
+				g.b[i+j] ^= 0
+			} else {
+				g.b[i+j] ^= galoisExpTable[(int(galoisLogTable[g.d[j]])+int(galoisLogTable[c]))%255]
+			}
+		}
+	}
+	copy(g.b, b)
+	g.swap()
+}
+
+func (g *galoisPoly) swap() {
+	t := g.b
+	g.b = g.d
+	g.d = t
 }
