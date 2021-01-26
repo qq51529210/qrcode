@@ -12,12 +12,13 @@ var (
 )
 
 type encoder struct {
-	str        string // 原始字符串
-	Level             // 纠错级别
-	mode              // 选择的模式
-	version           // 版本
-	bit               // 编码数据
-	galoisPoly        // 纠错多项式
+	str     string // 原始字符串
+	version byte   // 版本
+	level   Level  // 纠错级别
+	mode    mode   // 选择的模式
+	data    bit    // 原始字符串编码后的数据
+	poly    poly   // 多项式
+	buff    []byte // 缓存
 }
 
 // 编码
@@ -30,7 +31,7 @@ func (enc *encoder) Encode() error {
 		return err
 	}
 	// 数据
-	enc.bit.Reset()
+	enc.data.Reset()
 	// 指示器
 	enc.Indicator()
 	// 字符串长度
@@ -40,7 +41,7 @@ func (enc *encoder) Encode() error {
 	// 填充
 	enc.AddPadBytes()
 	// 纠错
-	enc.EC()
+	enc.ECC()
 	return nil
 }
 
@@ -73,9 +74,9 @@ func (enc *encoder) Mode() {
 
 // 判断编码版本
 func (enc *encoder) Version() error {
-	for i, a := range versionCapacity[enc.Level][enc.mode] {
+	for i, a := range versionCapacity[enc.level][enc.mode] {
 		if len(enc.str) <= a {
-			enc.version = version(i)
+			enc.version = byte(i)
 			return nil
 		}
 	}
@@ -84,84 +85,99 @@ func (enc *encoder) Version() error {
 
 // 编码指示器
 func (enc *encoder) Indicator() {
-	enc.bit.b[0] = modeIndicator[enc.mode]
-	enc.bit.n = 4
+	enc.data.b[0] = modeIndicator[enc.mode]
+	enc.data.n = 4
 }
 
 // 编码字符串长度
 func (enc *encoder) Length() {
 	n := uint16(len(enc.str))
-	if enc.version >= 0 && enc.version <= 8 {
+	if enc.version <= 8 {
 		// v1-9，10，9，8，8
 		switch enc.mode {
 		case numericMode:
-			enc.bit.Append(byte(n>>8), 2)
-			enc.bit.Append(byte(n), 8)
+			enc.data.Append(byte(n>>8), 2)
+			enc.data.Append(byte(n), 8)
 		case alphanumericMode:
-			enc.bit.Append(byte(n>>8), 1)
-			enc.bit.Append(byte(n), 8)
+			enc.data.Append(byte(n>>8), 1)
+			enc.data.Append(byte(n), 8)
 		case byteMode:
-			enc.bit.Append(byte(n), 8)
+			enc.data.Append(byte(n), 8)
 		case kanJiMode:
-			enc.bit.Append(byte(n), 8)
+			enc.data.Append(byte(n), 8)
 		}
 	} else if enc.version >= 9 && enc.version <= 25 {
 		// v10-26，12，11，16，10
 		switch enc.mode {
 		case numericMode:
-			enc.bit.Append(byte(n>>8), 4)
-			enc.bit.Append(byte(n), 8)
+			enc.data.Append(byte(n>>8), 4)
+			enc.data.Append(byte(n), 8)
 		case alphanumericMode:
-			enc.bit.Append(byte(n>>8), 3)
-			enc.bit.Append(byte(n), 8)
+			enc.data.Append(byte(n>>8), 3)
+			enc.data.Append(byte(n), 8)
 		case byteMode:
-			enc.bit.Append(byte(n>>8), 8)
-			enc.bit.Append(byte(n), 8)
+			enc.data.Append(byte(n>>8), 8)
+			enc.data.Append(byte(n), 8)
 		case kanJiMode:
-			enc.bit.Append(byte(n>>8), 2)
-			enc.bit.Append(byte(n), 8)
+			enc.data.Append(byte(n>>8), 2)
+			enc.data.Append(byte(n), 8)
 		}
 	} else {
 		// v27-40，14，13，16，12
 		switch enc.mode {
 		case numericMode:
-			enc.bit.Append(byte(n>>8), 6)
-			enc.bit.Append(byte(n), 8)
+			enc.data.Append(byte(n>>8), 6)
+			enc.data.Append(byte(n), 8)
 		case alphanumericMode:
-			enc.bit.Append(byte(n>>8), 5)
-			enc.bit.Append(byte(n), 8)
+			enc.data.Append(byte(n>>8), 5)
+			enc.data.Append(byte(n), 8)
 		case byteMode:
-			enc.bit.Append(byte(n>>8), 8)
-			enc.bit.Append(byte(n), 8)
+			enc.data.Append(byte(n>>8), 8)
+			enc.data.Append(byte(n), 8)
 		case kanJiMode:
-			enc.bit.Append(byte(n>>8), 4)
-			enc.bit.Append(byte(n), 8)
+			enc.data.Append(byte(n>>8), 4)
+			enc.data.Append(byte(n), 8)
 		}
 	}
 }
 
 // 调整编码的数据大小
 func (enc *encoder) AddPadBytes() {
-	if len(enc.bit.b) < versionECTable[enc.version][enc.Level].TotalBytes-1 {
-		if enc.bit.n > 4 {
-			enc.bit.b = append(enc.bit.b, 0)
+	if len(enc.data.b) < versionECTable[enc.version][enc.level].TotalBytes-1 {
+		if enc.data.n < 4 {
+			enc.data.b = append(enc.data.b, 0)
 		}
 	}
+	enc.data.n = 0
 	for {
-		if len(enc.bit.b) >= versionECTable[enc.version][enc.Level].TotalBytes {
+		if len(enc.data.b) >= versionECTable[enc.version][enc.level].TotalBytes {
 			return
 		}
-		enc.bit.b = append(enc.bit.b, 236)
-		if len(enc.bit.b) >= versionECTable[enc.version][enc.Level].TotalBytes {
+		enc.data.b = append(enc.data.b, 236)
+		if len(enc.data.b) >= versionECTable[enc.version][enc.level].TotalBytes {
 			return
 		}
-		enc.bit.b = append(enc.bit.b, 17)
+		enc.data.b = append(enc.data.b, 17)
 	}
 }
 
 // 纠错
-func (enc *encoder) EC() {
-	enc.galoisPoly.Encode(enc.bit.Bytes(), versionECTable[enc.version][enc.Level].BlockBytes)
+func (enc *encoder) ECC() {
+	// 版本纠错表
+	ect := versionECTable[enc.version][enc.level]
+	// 生成多项式
+	enc.poly.Gen(ect.BlockECBytes)
+	// 纠错编码
+	b := enc.data.Bytes()
+	for i := 0; i < ect.Group1Block; i++ {
+		enc.data.b = append(enc.data.b, enc.poly.Encode(b[:ect.Group1BlockBytes])...)
+		b = b[ect.Group1BlockBytes:]
+	}
+	for i := 0; i < ect.Group2Block; i++ {
+		enc.data.b = append(enc.data.b, enc.poly.Encode(b[:ect.Group2BlockBytes])...)
+		b = b[ect.Group2BlockBytes:]
+	}
+	// 交错结果
 }
 
 // 数字模式编码
@@ -174,13 +190,13 @@ func encNumeric(enc *encoder) {
 		case 1:
 			n = int16(enc.str[i] - '0')
 			i++
-			enc.bit.Append(byte(n), 4)
+			enc.data.Append(byte(n), 4)
 		case 2:
 			n = int16(enc.str[i]-'0') * 10
 			i++
 			n += int16(enc.str[i] - '0')
 			i++
-			enc.bit.Append(byte(n), 7)
+			enc.data.Append(byte(n), 7)
 		default:
 			n = int16(enc.str[i]-'0') * 100
 			i++
@@ -188,8 +204,8 @@ func encNumeric(enc *encoder) {
 			i++
 			n += int16(enc.str[i] - '0')
 			i++
-			enc.bit.Append(byte(n>>8), 2)
-			enc.bit.Append(byte(n), 8)
+			enc.data.Append(byte(n>>8), 2)
+			enc.data.Append(byte(n), 8)
 		}
 	}
 }
@@ -201,21 +217,23 @@ func encAlphanumeric(enc *encoder) {
 	var n uint16
 	for i2 < len(enc.str) {
 		n = uint16(alphanumericTable[enc.str[i1]])*45 + uint16(alphanumericTable[enc.str[i2]])
-		enc.bit.Append(byte(n>>8), 3)
-		enc.bit.Append(byte(n), 8)
+		enc.data.Append(byte(n>>8), 3)
+		enc.data.Append(byte(n), 8)
 		i1 += 2
 		i2 += 2
 	}
 	// 如果1个字符，6bit
 	if i1 < len(enc.str) {
-		enc.bit.Append(alphanumericTable[enc.str[i1]], 6)
+		enc.data.Append(alphanumericTable[enc.str[i1]], 6)
 	}
 }
 
 // 字节模式编码
 func encByte(enc *encoder) {
-	for _, c := range enc.str {
-		enc.bit.Append(byte(c), 8)
+	enc.buff = enc.buff[:0]
+	enc.buff = append(enc.buff, enc.str...)
+	for i := 0; i < len(enc.buff); i++ {
+		enc.data.Append(enc.buff[i], 8)
 	}
 }
 
@@ -232,7 +250,7 @@ func encKanJi(enc *encoder) {
 		}
 		// 结果（高字节*0xC0+低字节）是一个13bit的数
 		m = uint16(c>>8)*0xC0 + uint16(c)
-		enc.bit.Append(byte(m>>8), 5)
-		enc.bit.Append(byte(m), 8)
+		enc.data.Append(byte(m>>8), 5)
+		enc.data.Append(byte(m), 8)
 	}
 }

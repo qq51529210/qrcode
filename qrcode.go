@@ -54,7 +54,7 @@ func JPEG(w io.Writer, str string, level Level, pixel, quality int) error {
 
 func Image(str string, level Level, pixel int) (image.Image, error) {
 	enc := encPool.Get().(*encoder)
-	enc.Level = level
+	enc.level = level
 	enc.str = str
 	err := enc.Encode()
 	if err != nil {

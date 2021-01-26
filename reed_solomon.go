@@ -55,64 +55,55 @@ var (
 		172, 69, 138, 9, 18, 36, 72, 144, 61, 122,
 		244, 245, 247, 243, 251, 235, 203, 139, 11, 22,
 		44, 88, 176, 125, 250, 233, 207, 131, 27, 54,
-		108, 216, 173, 71, 142, 1}
+		108, 216, 173, 71, 142, 1,
+	}
 )
 
-type galoisPoly struct {
-	b []byte // 多项式生成过程的缓存
-	d []byte // 多项式生成过程的缓存
+type poly struct {
+	buff []byte // 缓存
+	data []byte // 多项式
 }
 
-func (g *galoisPoly) Mul(p []byte) {
-	g.b = resetBytes(g.b, len(g.d)+len(p)-1)
-	for i := 0; i < len(p); i++ {
-		for j := 0; j < len(g.d); j++ {
-			if g.d[j] == 0 || p[i] == 0 {
-				g.b[i+j] ^= 0
-			} else {
-				g.b[i+j] ^= galoisExpTable[(int(galoisLogTable[g.d[j]])+int(galoisLogTable[p[i]]))%255]
-			}
+func (p *poly) Mul(b []byte) {
+	p.buff = resetBytes(p.buff, len(p.data)+len(b)-1)
+	for i := 0; i < len(b); i++ {
+		for j := 0; j < len(p.data); j++ {
+			p.buff[i+j] ^= p.mul(p.data[j], b[i])
 		}
 	}
-	g.swap()
+	// 交换缓存
+	t := p.buff
+	p.buff = p.data
+	p.data = t
 }
 
-func (g *galoisPoly) Gen(n int) {
-	g.d = resetBytes(g.d, 1)
-	g.d[0] = 1
+func (p *poly) Gen(n int) {
+	p.data = resetBytes(p.data, 1)
+	p.data[0] = 1
 	a := []byte{1, 0}
 	for i := 0; i < n; i++ {
 		a[1] = galoisExpTable[i]
-		g.Mul(a[:])
+		p.Mul(a[:])
 	}
 }
 
-func (g *galoisPoly) Encode(b []byte, n int) {
-	// 生成多项式
-	g.Gen(n)
+func (p *poly) Encode(b []byte) []byte {
 	// 求余
-	g.b = resetBytes(g.b, len(b)+len(g.d)-1)
-	copy(g.b, b)
-	var c byte
+	p.buff = resetBytes(p.buff, len(b)+len(p.data)-1)
+	copy(p.buff, b)
 	for i := 0; i < len(b); i++ {
-		if g.b[i] == 0 {
-			continue
-		}
-		c = g.b[i]
-		for j := 1; j < len(g.d); j++ {
-			if g.d[j] == 0 || c == 0 {
-				g.b[i+j] ^= 0
-			} else {
-				g.b[i+j] ^= galoisExpTable[(int(galoisLogTable[g.d[j]])+int(galoisLogTable[c]))%255]
+		if p.buff[i] != 0 {
+			for j := 1; j < len(p.data); j++ {
+				p.buff[i+j] ^= p.mul(p.data[j], p.buff[i])
 			}
 		}
 	}
-	copy(g.b, b)
-	g.swap()
+	return p.buff[len(b):]
 }
 
-func (g *galoisPoly) swap() {
-	t := g.b
-	g.b = g.d
-	g.d = t
+func (p *poly) mul(n1, n2 byte) byte {
+	if n1 == 0 || n2 == 0 {
+		return 0
+	}
+	return galoisExpTable[(int(galoisLogTable[n1])+int(galoisLogTable[n2]))%255]
 }
