@@ -19,7 +19,7 @@ const (
 	numericMode mode = iota
 	alphanumericMode
 	byteMode
-	kanJiMode // 这个模式在没有太大的意义，go的string存放utf-8，可以直接用byteMode
+	kanJiMode
 	maxMode
 )
 

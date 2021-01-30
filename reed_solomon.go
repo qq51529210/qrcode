@@ -88,7 +88,6 @@ func (p *poly) Gen(n int) {
 }
 
 func (p *poly) Encode(b []byte) []byte {
-	// 求余
 	p.buff = resetBytes(p.buff, len(b)+len(p.data)-1)
 	copy(p.buff, b)
 	for i := 0; i < len(b); i++ {

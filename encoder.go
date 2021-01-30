@@ -6,23 +6,24 @@ import (
 )
 
 var (
-	encFunc = [maxMode]func(*encoder){
+	strEncodeFunc = [maxMode]func(*strEncoder){
 		encNumeric, encAlphanumeric, encByte, encKanJi,
 	} // 编码函数
 )
 
-type encoder struct {
+type strEncoder struct {
 	str     string // 原始字符串
 	version byte   // 版本
+	size    int    // 大小
 	level   Level  // 纠错级别
 	mode    mode   // 选择的模式
 	data    bit    // 原始字符串编码后的数据
-	poly    poly   // 多项式
-	buff    []byte // 缓存
+	buff    []byte // 字节编码使用的缓存
+	poly    poly   // 纠错多项式
 }
 
 // 编码
-func (enc *encoder) Encode() error {
+func (enc *strEncoder) Encode() error {
 	// 确定编码模式
 	enc.Mode()
 	// 确定最小版本
@@ -30,23 +31,23 @@ func (enc *encoder) Encode() error {
 	if err != nil {
 		return err
 	}
-	// 数据
+	// 图像大小
+	enc.size = int(enc.version)*4 + 21
+	// 准备编码
 	enc.data.Reset()
-	// 指示器
+	// 写入指示器
 	enc.Indicator()
-	// 字符串长度
+	// 写入字符串长度
 	enc.Length()
-	// 编码
-	encFunc[enc.mode](enc)
-	// 填充
+	// 写入字符串数据
+	strEncodeFunc[enc.mode](enc)
+	// 填充编码后的长度
 	enc.AddPadBytes()
-	// 纠错
-	enc.ECC()
 	return nil
 }
 
 // 判断编码模式
-func (enc *encoder) Mode() {
+func (enc *strEncoder) Mode() {
 	enc.mode = numericMode
 	for _, c := range enc.str {
 		if unicode.MaxLatin1 < c {
@@ -73,7 +74,7 @@ func (enc *encoder) Mode() {
 }
 
 // 判断编码版本
-func (enc *encoder) Version() error {
+func (enc *strEncoder) Version() error {
 	for i, a := range versionCapacity[enc.level][enc.mode] {
 		if len(enc.str) <= a {
 			enc.version = byte(i)
@@ -84,13 +85,13 @@ func (enc *encoder) Version() error {
 }
 
 // 编码指示器
-func (enc *encoder) Indicator() {
+func (enc *strEncoder) Indicator() {
 	enc.data.b[0] = modeIndicator[enc.mode]
 	enc.data.n = 4
 }
 
 // 编码字符串长度
-func (enc *encoder) Length() {
+func (enc *strEncoder) Length() {
 	n := uint16(len(enc.str))
 	if enc.version <= 8 {
 		// v1-9，10，9，8，8
@@ -142,9 +143,9 @@ func (enc *encoder) Length() {
 }
 
 // 调整编码的数据大小
-func (enc *encoder) AddPadBytes() {
-	if len(enc.data.b) < versionECTable[enc.version][enc.level].TotalBytes-1 {
-		if enc.data.n < 4 {
+func (enc *strEncoder) AddPadBytes() {
+	if len(enc.data.b) < versionECTable[enc.version][enc.level].TotalBytes {
+		if enc.data.n > 4 {
 			enc.data.b = append(enc.data.b, 0)
 		}
 	}
@@ -162,26 +163,63 @@ func (enc *encoder) AddPadBytes() {
 }
 
 // 纠错
-func (enc *encoder) ECC() {
+func (enc *strEncoder) ECC() {
 	// 版本纠错表
 	ect := versionECTable[enc.version][enc.level]
 	// 生成多项式
 	enc.poly.Gen(ect.BlockECBytes)
 	// 纠错编码
-	b := enc.data.Bytes()
+	data := enc.data.Bytes()
 	for i := 0; i < ect.Group1Block; i++ {
-		enc.data.b = append(enc.data.b, enc.poly.Encode(b[:ect.Group1BlockBytes])...)
-		b = b[ect.Group1BlockBytes:]
+		enc.data.b = append(enc.data.b, enc.poly.Encode(data[:ect.Group1BlockBytes])...)
+		data = data[ect.Group1BlockBytes:]
 	}
 	for i := 0; i < ect.Group2Block; i++ {
-		enc.data.b = append(enc.data.b, enc.poly.Encode(b[:ect.Group2BlockBytes])...)
-		b = b[ect.Group2BlockBytes:]
+		enc.data.b = append(enc.data.b, enc.poly.Encode(data[:ect.Group2BlockBytes])...)
+		data = data[ect.Group2BlockBytes:]
 	}
-	// 交错结果
+}
+
+// 交错
+func (enc *strEncoder) Interleave() []byte {
+	// 版本纠错表
+	ect := versionECTable[enc.version][enc.level]
+	// 交错
+	if ect.Group2Block > 0 {
+		enc.buff = resetBytes(enc.buff, len(enc.data.b))
+		idx, col := 0, 0
+		groupTotalBytes := ect.Group1Block * ect.Group1Block
+		for col < ect.Group2BlockBytes {
+			if col < ect.Group1BlockBytes {
+				for i := 0; i < ect.Group1Block; i++ {
+					enc.buff[idx] = enc.data.b[col+i*ect.Group1BlockBytes]
+					idx++
+				}
+			}
+			for i := 0; i < ect.Group2Block; i++ {
+				enc.buff[idx] = enc.data.b[col+groupTotalBytes+i*ect.Group2BlockBytes]
+				idx++
+			}
+			col++
+		}
+		col = 0
+		for col < ect.BlockECBytes {
+			for i := 0; i < ect.Group1Block; i++ {
+				enc.buff[idx] = enc.data.b[col+i*ect.BlockECBytes]
+				idx++
+			}
+			for i := 0; i < ect.Group2Block; i++ {
+				enc.buff[idx] = enc.data.b[col+(ect.Group1Block+i)*ect.BlockECBytes]
+				idx++
+			}
+			col++
+		}
+	}
+	return enc.buff
 }
 
 // 数字模式编码
-func encNumeric(enc *encoder) {
+func encNumeric(enc *strEncoder) {
 	// 将字符分组，3个（10bit），2个（7bit），1个（4bit）
 	i := 0
 	var n int16
@@ -211,7 +249,7 @@ func encNumeric(enc *encoder) {
 }
 
 // 字母模式编码
-func encAlphanumeric(enc *encoder) {
+func encAlphanumeric(enc *strEncoder) {
 	// 两个字符一组，alphanumericTable[0]*45+alphanumericTable[1]，(11bit)
 	i1, i2 := 0, 1
 	var n uint16
@@ -229,7 +267,7 @@ func encAlphanumeric(enc *encoder) {
 }
 
 // 字节模式编码
-func encByte(enc *encoder) {
+func encByte(enc *strEncoder) {
 	enc.buff = enc.buff[:0]
 	enc.buff = append(enc.buff, enc.str...)
 	for i := 0; i < len(enc.buff); i++ {
@@ -238,7 +276,7 @@ func encByte(enc *encoder) {
 }
 
 // 日文模式编码
-func encKanJi(enc *encoder) {
+func encKanJi(enc *strEncoder) {
 	var m uint16
 	for _, c := range enc.str {
 		if uint16(c) <= 0x9FFC {
