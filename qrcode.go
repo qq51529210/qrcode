@@ -9,6 +9,10 @@ import (
 	"sync"
 )
 
+const (
+	maxMark = 8
+)
+
 var (
 	_pool    sync.Pool
 	_palette = color.Palette{
@@ -19,11 +23,95 @@ var (
 		color.RGBA{B: 255, A: 255},
 	}
 	//_palette      = color.Palette{color.Black, color.White}
-	_paletteBlack = uint8(_palette.Index(color.Black))
-	_paletteWhite = uint8(_palette.Index(color.White))
-	_paletteR     = uint8(_palette.Index(color.RGBA{R: 255, A: 255}))
-	_paletteG     = uint8(_palette.Index(color.RGBA{G: 255, A: 255}))
-	_paletteB     = uint8(_palette.Index(color.RGBA{B: 255, A: 255}))
+	_paletteBlack  = uint8(_palette.Index(color.Black))
+	_paletteWhite  = uint8(_palette.Index(color.White))
+	_paletteR      = uint8(_palette.Index(color.RGBA{R: 255, A: 255}))
+	_paletteG      = uint8(_palette.Index(color.RGBA{G: 255, A: 255}))
+	_paletteB      = uint8(_palette.Index(color.RGBA{B: 255, A: 255}))
+	formatBitTable = [maxLevel][maxMark][]byte{
+		{
+			{1, 1, 1, 0, 1, 1, 1, 1, 1, 0, 0, 0, 1, 0, 0},
+			{1, 1, 1, 0, 0, 1, 0, 1, 1, 1, 1, 0, 0, 1, 1},
+			{1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 0, 1, 0, 1, 0},
+			{1, 1, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1, 1, 0, 1},
+			{1, 1, 0, 0, 1, 1, 0, 0, 0, 1, 0, 1, 1, 1, 1},
+			{1, 1, 0, 0, 0, 1, 1, 0, 0, 0, 1, 1, 0, 0, 0},
+			{1, 1, 0, 1, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1},
+			{1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 1, 0, 1, 1, 0},
+		},
+		{
+			{1, 0, 1, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 1, 0},
+			{1, 0, 1, 0, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 1},
+			{1, 0, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 0, 0},
+			{1, 0, 1, 1, 0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1},
+			{1, 0, 0, 0, 1, 0, 1, 1, 1, 1, 1, 1, 0, 0, 1},
+			{1, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 1, 1, 0},
+			{1, 0, 0, 1, 1, 1, 1, 1, 0, 0, 1, 0, 1, 1, 1},
+			{1, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0, 0, 0, 0},
+		},
+		{
+			{0, 1, 1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 1, 1, 1},
+			{0, 1, 1, 0, 0, 0, 0, 0, 1, 1, 0, 1, 0, 0, 0},
+			{0, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 0, 0, 0, 1},
+			{0, 1, 1, 1, 0, 1, 0, 0, 0, 0, 0, 0, 1, 1, 0},
+			{0, 1, 0, 0, 1, 0, 0, 1, 0, 1, 1, 0, 1, 0, 0},
+			{0, 1, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 1, 1},
+			{0, 1, 0, 1, 1, 1, 0, 1, 1, 0, 1, 1, 0, 1, 0},
+			{0, 1, 0, 1, 0, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1},
+		},
+		{
+			{0, 0, 1, 0, 1, 1, 0, 1, 0, 0, 0, 1, 0, 0, 1},
+			{0, 0, 1, 0, 0, 1, 1, 1, 0, 1, 1, 1, 1, 1, 0},
+			{0, 0, 1, 1, 1, 0, 0, 1, 1, 1, 0, 0, 1, 1, 1},
+			{0, 0, 1, 1, 0, 0, 1, 1, 1, 0, 1, 0, 0, 0, 0},
+			{0, 0, 0, 0, 1, 1, 1, 0, 1, 1, 0, 0, 0, 1, 0},
+			{0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 1, 0, 1, 0, 1},
+			{0, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 1, 0, 0},
+			{0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 1, 1, 0, 1, 1},
+		},
+	}
+	versionBitTable = [maxVersion][]byte{
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{0, 0, 0, 1, 1, 1, 1, 1, 0, 0, 1, 0, 0, 1, 0, 1, 0, 0},
+		{0, 0, 1, 0, 0, 0, 0, 1, 0, 1, 1, 0, 1, 1, 1, 1, 0, 0},
+		{0, 0, 1, 0, 0, 1, 1, 0, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1},
+		{0, 0, 1, 0, 1, 0, 0, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1, 1},
+		{0, 0, 1, 0, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 1, 0},
+		{0, 0, 1, 1, 0, 0, 0, 1, 1, 1, 0, 1, 1, 0, 0, 0, 1, 0},
+		{0, 0, 1, 1, 0, 1, 1, 0, 0, 0, 0, 1, 0, 0, 0, 1, 1, 1},
+		{0, 0, 1, 1, 1, 0, 0, 1, 1, 0, 0, 0, 0, 0, 1, 1, 0, 1},
+		{0, 0, 1, 1, 1, 1, 1, 0, 0, 1, 0, 0, 1, 0, 1, 0, 0, 0},
+		{0, 1, 0, 0, 0, 0, 1, 0, 1, 1, 0, 1, 1, 1, 1, 0, 0, 0},
+		{0, 1, 0, 0, 0, 1, 0, 1, 0, 0, 0, 1, 0, 1, 1, 1, 0, 1},
+		{0, 1, 0, 0, 1, 0, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 1, 1},
+		{0, 1, 0, 0, 1, 1, 0, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0},
+		{0, 1, 0, 1, 0, 0, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1, 1, 0},
+		{0, 1, 0, 1, 0, 1, 0, 1, 1, 0, 1, 0, 0, 0, 0, 0, 1, 1},
+		{0, 1, 0, 1, 1, 0, 1, 0, 0, 0, 1, 1, 0, 0, 1, 0, 0, 1},
+		{0, 1, 0, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 0},
+		{0, 1, 1, 0, 0, 0, 1, 1, 1, 0, 1, 1, 0, 0, 0, 1, 0, 0},
+		{0, 1, 1, 0, 0, 1, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 1},
+		{0, 1, 1, 0, 1, 0, 1, 1, 1, 1, 1, 0, 1, 0, 1, 0, 1, 1},
+		{0, 1, 1, 0, 1, 1, 0, 0, 0, 0, 1, 0, 0, 0, 1, 1, 1, 0},
+		{0, 1, 1, 1, 0, 0, 1, 1, 0, 0, 0, 0, 0, 1, 1, 0, 1, 0},
+		{0, 1, 1, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 1, 1, 1, 1, 1},
+		{0, 1, 1, 1, 1, 0, 1, 1, 0, 1, 0, 1, 1, 1, 0, 1, 0, 1},
+		{0, 1, 1, 1, 1, 1, 0, 0, 1, 0, 0, 1, 0, 1, 0, 0, 0, 0},
+		{1, 0, 0, 0, 0, 0, 1, 0, 0, 1, 1, 1, 0, 1, 0, 1, 0, 1},
+		{1, 0, 0, 0, 0, 1, 0, 1, 1, 0, 1, 1, 1, 1, 0, 0, 0, 0},
+		{1, 0, 0, 0, 1, 0, 1, 0, 0, 0, 1, 0, 1, 1, 1, 0, 1, 0},
+		{1, 0, 0, 0, 1, 1, 0, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1},
+		{1, 0, 0, 1, 0, 0, 1, 0, 1, 1, 0, 0, 0, 0, 1, 0, 1, 1},
+		{1, 0, 0, 1, 0, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 1, 1, 0},
+		{1, 0, 0, 1, 1, 0, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 0},
+		{1, 0, 0, 1, 1, 1, 0, 1, 0, 1, 0, 1, 0, 0, 0, 0, 0, 1},
+		{1, 0, 1, 0, 0, 0, 1, 1, 0, 0, 0, 1, 1, 0, 1, 0, 0, 1},
+	}
 )
 
 func init() {
@@ -83,8 +171,7 @@ func Image(str string, level Level) (image.Image, error) {
 	q.img = img
 	// 开始画图
 	q.Draw()
-	// mark
-	q.Mark()
+	q.img = nil
 	// 回收缓存
 	_pool.Put(q)
 	// 返回
@@ -95,6 +182,7 @@ type qrCode struct {
 	str  strEncoder      // 字符串编码器
 	data []byte          // 交错后的数据，指针
 	img  *image.Paletted // 图
+	mark int             // 使用的mark图
 }
 
 // 画图
@@ -102,7 +190,6 @@ func (q *qrCode) Draw() {
 	// 所有的像素设为白色
 	for i := 0; i < len(q.img.Pix); i++ {
 		q.img.Pix[i] = _paletteWhite
-		//q.img.Pix[i] = _paletteGray
 	}
 	//q.test()
 	q.DrawFinderPatterns()
@@ -110,6 +197,7 @@ func (q *qrCode) Draw() {
 	q.DrawAlignmentPatterns()
 	q.DrawBottomLeftPoint()
 	q.DrawData()
+	q.Mark()
 	q.DrawFormat()
 	q.DrawVersion()
 }
@@ -200,17 +288,68 @@ func (q *qrCode) DrawBottomLeftPoint() {
 }
 
 func (q *qrCode) DrawFormat() {
-	//数据位占 5bits：其中 2bits 用于表示使用的纠错等级 (Error Correction Level)，3bits 用于表示使用的蒙版 (Mask) 类别；
-	//纠错位占 10bits：主要通过 BCH Code 计算
-	//假设存在纠错等级为 M（对应 00），蒙版图案对应 000，5bits 的数据位为 00101，10bits 的纠错位为 0011011100：
-	//则生成了在异或操作之前的 bits 序列为：001010011011100
-	//与 101010000010010 做异或 XOR 操作，即得到最终格式信息：100000011001110
+	f := formatBitTable[q.str.level][q.mark]
+	idx := 0
+	// 左上角
+	for x := 0; x < 6; x++ {
+		if f[idx] == 1 {
+			q.img.SetColorIndex(x, 8, _paletteBlack)
+		}
+		idx++
+	}
+	if f[idx] == 1 {
+		q.img.SetColorIndex(7, 8, _paletteBlack)
+	}
+	idx++
+	if f[idx] == 1 {
+		q.img.SetColorIndex(8, 8, _paletteBlack)
+	}
+	idx++
+	if f[idx] == 1 {
+		q.img.SetColorIndex(8, 7, _paletteBlack)
+	}
+	idx++
+	for y := 5; y >= 0; y-- {
+		if f[idx] == 1 {
+			q.img.SetColorIndex(8, y, _paletteBlack)
+		}
+		idx++
+	}
+	idx = 0
+	// 左下角
+	for y := q.img.Rect.Max.Y - 1; y > q.img.Rect.Max.Y-8; y-- {
+		if f[idx] == 1 {
+			q.img.SetColorIndex(8, y, _paletteBlack)
+		}
+		idx++
+	}
+	// 右上角
+	for x := q.img.Rect.Max.X - 8; x <= q.img.Rect.Max.X-1; x++ {
+		if f[idx] == 1 {
+			q.img.SetColorIndex(x, 8, _paletteBlack)
+		}
+		idx++
+	}
 }
 
 func (q *qrCode) DrawVersion() {
-	//18bits 的版本信息中，前 6bits 为版本号 (Version Number)，后 12bits 为纠错码 (BCH Bits)。示例如下：
-	//假设存在一个 Version 为 7 的二维码（对应 6bits 版本号为 000111），其纠错码为 110010010100；
-	//则版本信息图案中的应填充的数据为：000111110010010100
+	if q.str.version < 6 {
+		return
+	}
+	ver := versionBitTable[q.str.version]
+	x := q.img.Rect.Max.X - 11
+	y := q.img.Rect.Max.Y - 8
+	idx := 0
+	for i := 0; i < 6; i++ {
+		for j := 0; j < 3; j++ {
+			if ver[idx] == 1 {
+				// 左下角
+				q.img.SetColorIndex(i, j+y, _paletteBlack)
+				q.img.SetColorIndex(i+x, j, _paletteBlack)
+			}
+			idx++
+		}
+	}
 }
 
 func (q *qrCode) DrawData() {
