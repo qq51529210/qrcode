@@ -164,11 +164,11 @@ var (
 	}
 	// 用于快速选择每个版本的二维码像素大小
 	qrCodeSizeTable [maxVersion]int
-	// 版本最终bit字符串需要添加的0
-	//versionRemainderBits = [maxVersion]byte{
-	//	0, 7, 7, 7, 7, 7, 0, 0, 0, 0, 0, 0, 0, 3, 3, 3, 3, 3, 3, 3,
-	//	4, 4, 4, 4, 4, 4, 4, 3, 3, 3, 3, 3, 3, 3, 0, 0, 0, 0, 0, 0,
-	//}
+	// 纠错编码，交错后需要添加的bit个数
+	interleaveRemainder = [maxVersion]byte{
+		0, 7, 7, 7, 7, 7, 0, 0, 0, 0, 0, 0, 0, 3, 3, 3, 3, 3, 3, 3,
+		4, 4, 4, 4, 4, 4, 4, 3, 3, 3, 3, 3, 3, 3, 0, 0, 0, 0, 0, 0,
+	}
 )
 
 func init() {
@@ -189,5 +189,5 @@ func analysisVersion(str string, level Level, mode mode) (version, error) {
 			return version(i), nil
 		}
 	}
-	return maxVersion, fmt.Errorf("string length <%d> too lager", len(str))
+	return maxVersion, fmt.Errorf("input string length <%d> too lager", len(str))
 }

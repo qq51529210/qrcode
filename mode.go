@@ -22,6 +22,9 @@ var (
 		0b01000000,
 		0b10000000,
 	}
+	modeString = [maxMode]string{
+		"numeric", "alphanumeric", "byte", "kanji",
+	}
 )
 
 func init() {
@@ -30,17 +33,17 @@ func init() {
 
 // 初始化字母表
 func initAlphanumericTable() {
-	var i byte
+	i := 0
 	for c := '0'; c <= '9'; c++ {
-		alphanumericTable[c] = i
+		alphanumericTable[c] = byte(i)
 		i++
 	}
 	for c := 'A'; c <= 'Z'; c++ {
-		alphanumericTable[c] = i
+		alphanumericTable[c] = byte(i)
 		i++
 	}
 	for _, c := range []byte{' ', '$', '%', '*', '+', '-', '.', '/', ':'} {
-		alphanumericTable[c] = i
+		alphanumericTable[c] = byte(i)
 		i++
 	}
 }

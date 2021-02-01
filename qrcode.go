@@ -5,12 +5,14 @@ package qrcode
 */
 
 import (
+	"fmt"
 	"image"
 	"image/color"
 	"image/jpeg"
 	"image/png"
 	"io"
 	"math"
+	"strings"
 	"sync"
 )
 
@@ -1080,6 +1082,16 @@ func Image(str string, level Level) (image.Image, error) {
 	return img, err
 }
 
+func printBits(b []byte) {
+	var str strings.Builder
+	for i := 0; i < len(b); i++ {
+		for j := 7; j >= 0; j-- {
+			str.WriteString(fmt.Sprint((b[i] >> j) & 0b00000001))
+		}
+	}
+	fmt.Println(str.String())
+}
+
 // 缓存
 type buffer struct {
 	data []byte
@@ -1147,7 +1159,6 @@ func (q *qrCode) Draw() []uint8 {
 	q.mark()
 	q.drawFormat()
 	q.drawVersion()
-	copy(q.pix, q.markData.data)
 	return q.pix
 }
 
@@ -1599,6 +1610,8 @@ func (q *qrCode) mark() {
 		}
 		idx = -1
 	}
+	// 最终的数据
+	copy(q.pix, q.markData.data)
 }
 
 // 找到5个连续颜色的点，+3分
@@ -1740,5 +1753,4 @@ func (q *qrCode) evaluation4() int {
 	} else {
 		return n1 * 10
 	}
-	return 0
 }

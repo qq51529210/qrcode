@@ -340,7 +340,7 @@ func (e *eccEncoder) Encode(data []byte, version version, level Level) {
 		p = p[ec.Group2BlockBytes:]
 	}
 	// 交错
-	if ec.Group2Block > 0 {
+	if ec.Group2Block > 0 || ec.Group1Block > 1 {
 		e.buff.Resize(len(e.data), -1)
 		// 二维表
 		e.xy = e.xy[:0]
@@ -383,6 +383,10 @@ func (e *eccEncoder) Encode(data []byte, version version, level Level) {
 				e.buff.data[idx] = e.xy[y][x]
 				idx++
 			}
+		}
+		// 添加余数
+		if interleaveRemainder[level] > 0 {
+			e.buff.data = append(e.buff.data, 0)
 		}
 		// 交换缓存
 		t := e.buff.data

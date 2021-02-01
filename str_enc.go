@@ -14,31 +14,30 @@ type strEncoder struct {
 	str     string  // 原始字符串
 	buff    *buffer // 共享缓存，在字节编码和交错会用到
 	bitD    []byte  // 编码的数据
-	bitN    int     // 最后一个字节的bit个数
+	bitN    byte    // 最后一个字节剩余的bit个数
 	version         // 版本
 	Level           // 纠错级别
 	mode            // 选择的模式
 }
 
 // 添加bit，c是小端字节，n是bit的个数
-func (e *strEncoder) appendBit(c byte, n int) {
-	i := 8 - e.bitN
-	if n < i {
-		e.bitD[len(e.bitD)-1] |= c << (i - n)
-		e.bitN += n
+func (e *strEncoder) appendBit(c, n byte) {
+	if e.bitN > n {
+		e.bitD[len(e.bitD)-1] |= c << (e.bitN - n)
+		e.bitN -= n
 		return
 	}
-	if n == i {
+	if e.bitN == n {
 		e.bitD[len(e.bitD)-1] |= c
 		e.bitD = append(e.bitD, 0)
-		e.bitN = 0
+		e.bitN = 8
 		return
 	}
-	j := n - i
-	e.bitD[len(e.bitD)-1] |= c >> j
+	e.bitN = n - e.bitN
+	e.bitD[len(e.bitD)-1] |= c >> e.bitN
 	e.bitD = append(e.bitD, 0)
-	e.bitD[len(e.bitD)-1] |= c << i
-	e.bitN = j
+	e.bitN = 8 - e.bitN
+	e.bitD[len(e.bitD)-1] |= c << e.bitN
 }
 
 // 编码
@@ -69,13 +68,14 @@ func (e *strEncoder) Encode(str string, level Level) error {
 
 // 编码指示器
 func (e *strEncoder) encIndicator() {
-	e.appendBit(indicatorTable[e.mode], 4)
+	e.bitD[0] = indicatorTable[e.mode]
+	e.bitN = 4
 }
 
 // 编码字符串长度
 func (e *strEncoder) encStrLength() {
 	n := uint16(len(e.str))
-	if e.version <= 8 {
+	if e.version <= version9 {
 		// v1-9，10，9，8，8
 		switch e.mode {
 		case numericMode:
@@ -89,7 +89,9 @@ func (e *strEncoder) encStrLength() {
 		case kanJiMode:
 			e.appendBit(byte(n), 8)
 		}
-	} else if e.version >= 9 && e.version <= 25 {
+		return
+	}
+	if e.version >= version10 && e.version <= version26 {
 		// v10-26，12，11，16，10
 		switch e.mode {
 		case numericMode:
@@ -105,29 +107,29 @@ func (e *strEncoder) encStrLength() {
 			e.appendBit(byte(n>>8), 2)
 			e.appendBit(byte(n), 8)
 		}
-	} else {
-		// v27-40，14，13，16，12
-		switch e.mode {
-		case numericMode:
-			e.appendBit(byte(n>>8), 6)
-			e.appendBit(byte(n), 8)
-		case alphanumericMode:
-			e.appendBit(byte(n>>8), 5)
-			e.appendBit(byte(n), 8)
-		case byteMode:
-			e.appendBit(byte(n>>8), 8)
-			e.appendBit(byte(n), 8)
-		case kanJiMode:
-			e.appendBit(byte(n>>8), 4)
-			e.appendBit(byte(n), 8)
-		}
+		return
+	}
+	// v27-40，14，13，16，12
+	switch e.mode {
+	case numericMode:
+		e.appendBit(byte(n>>8), 6)
+		e.appendBit(byte(n), 8)
+	case alphanumericMode:
+		e.appendBit(byte(n>>8), 5)
+		e.appendBit(byte(n), 8)
+	case byteMode:
+		e.appendBit(byte(n>>8), 8)
+		e.appendBit(byte(n), 8)
+	case kanJiMode:
+		e.appendBit(byte(n>>8), 4)
+		e.appendBit(byte(n), 8)
 	}
 }
 
 // 调整编码的数据大小
 func (e *strEncoder) appendPadBytes() {
 	if len(e.bitD) < errorCorrectionTable[e.version][e.Level].TotalBytes {
-		if e.bitN > 4 {
+		if e.bitN < 4 {
 			e.bitD = append(e.bitD, 0)
 		}
 	}
