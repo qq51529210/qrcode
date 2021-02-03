@@ -5,19 +5,19 @@ package qrcode
 */
 
 import (
-	"fmt"
 	"image"
 	"image/color"
 	"image/jpeg"
 	"image/png"
 	"io"
 	"math"
-	"strings"
 	"sync"
 )
 
 const (
-	maxMark = 8
+	maxMark                 = 8
+	horizontalTimingPattern = 6
+	verticalTimingPattern   = 6
 )
 
 var (
@@ -1006,7 +1006,10 @@ var (
 			return (x+y)%3 == 0
 		},
 		func(x, y int) bool {
-			return int(float64(y)/2+float64(x)/3)%2 == 0
+			return (int(float64(y)/2)+int(float64(x)/3))%2 == 0
+		},
+		func(x, y int) bool {
+			return ((x*y)%2 + (x*y)%3) == 0
 		},
 		func(x, y int) bool {
 			return ((x*y)%2+(x*y)%3)%2 == 0
@@ -1031,10 +1034,10 @@ func init() {
 	_pool.New = func() interface{} {
 		q := new(qrCode)
 		q.buffer.data = make([]byte, 1)
-		q.strEncoder.bitD = make([]byte, 1)
-		q.strEncoder.buff = &q.buffer
-		q.eccEncoder.poly = make([]byte, 1)
-		q.eccEncoder.buff = &q.buffer
+		q.strEnc.bitD = make([]byte, 1)
+		q.strEnc.buff = &q.buffer
+		q.eccEnc.poly = make([]byte, 1)
+		q.eccEnc.buff = &q.buffer
 		return q
 	}
 }
@@ -1062,34 +1065,25 @@ func JPEG(w io.Writer, str string, level Level, quality int) error {
 func Image(str string, level Level) (image.Image, error) {
 	q := _pool.Get().(*qrCode)
 	// 字符串编码
-	err := q.strEncoder.Encode(str, level)
+	err := q.strEnc.Encode(str, level)
 	if err != nil {
 		_pool.Put(q)
 		return nil, err
 	}
 	// 纠错编码
-	q.eccEncoder.Encode(q.strEncoder.bitD, q.strEncoder.version, level)
+	q.eccEnc.Encode(q.strEnc.bitD, q.strEnc.version, level)
 	// 位图
 	img := new(image.Paletted)
-	img.Stride = qrCodeSizeTable[q.strEncoder.version]
+	img.Stride = qrCodeSizeTable[q.strEnc.version] + 8
 	img.Rect.Max.X = img.Stride
 	img.Rect.Max.Y = img.Stride
 	img.Palette = _palette
-	img.Pix = q.Draw()
+	img.Pix = make([]uint8, img.Stride*img.Stride)
+	q.Draw(img)
 	// 回收缓存
 	_pool.Put(q)
 	// 返回
 	return img, err
-}
-
-func printBits(b []byte) {
-	var str strings.Builder
-	for i := 0; i < len(b); i++ {
-		for j := 7; j >= 0; j-- {
-			str.WriteString(fmt.Sprint((b[i] >> j) & 0b00000001))
-		}
-	}
-	fmt.Println(str.String())
 }
 
 // 缓存
@@ -1115,51 +1109,45 @@ func (b *buffer) Resize(n, o int) {
 }
 
 type qrCode struct {
-	strEncoder strEncoder // 字符串编码
-	eccEncoder eccEncoder // 纠错编码
 	buffer     buffer     // 共享缓存
-	pix        []uint8    // 原始位图数据
+	strEnc     strEncoder // 字符串编码
+	eccEnc     eccEncoder // 纠错编码
 	pixXY      [][]uint8  // 位图二维数组指针
 	markNum    int        // 使用的mark图编号
 	markData   buffer     // mark后的最终数据
-	markXY     [][]uint8  // mark后的缓存数组的二维指针
-}
-
-// 根据原始图像的一维数组，生成二维表，便于操作
-func (q *qrCode) initPixXY() {
-	q.pixXY = q.pixXY[:0]
-	b := q.pix
-	for i := 0; i < qrCodeSizeTable[q.strEncoder.version]; i++ {
-		q.pixXY = append(q.pixXY, b[:qrCodeSizeTable[q.strEncoder.version]])
-		b = b[qrCodeSizeTable[q.strEncoder.version]:]
-	}
-}
-
-// 根据mark后的图像的一维数组缓存，生成二维表，便于操作
-func (q *qrCode) initMarkXY() {
-	q.markXY = q.markXY[:0]
-	b := q.buffer.data
-	for i := 0; i < qrCodeSizeTable[q.strEncoder.version]; i++ {
-		q.markXY = append(q.markXY, b[:qrCodeSizeTable[q.strEncoder.version]])
-		b = b[qrCodeSizeTable[q.strEncoder.version]:]
-	}
+	markBuffXY [][]uint8  // mark后的缓存数组的二维指针
+	markDataXY [][]uint8  // mark后的缓存数组的二维指针
 }
 
 // 画图
-func (q *qrCode) Draw() []uint8 {
-	q.pix = make([]uint8, qrCodeSizeTable[q.strEncoder.version]*qrCodeSizeTable[q.strEncoder.version])
-	q.buffer.Resize(len(q.pix), 0)
-	q.markData.Resize(len(q.pix), -1)
-	q.initPixXY()
+func (q *qrCode) Draw(img *image.Paletted) {
+	// 图像数据，包括两边的4个空白
+	q.buffer.Resize((img.Stride-8)*(img.Stride-8), -1)
+	q.markData.Resize(len(q.buffer.data), -1)
+	// 二维表，便于操作
+	pix1 := img.Pix[4*(img.Stride)+4:]
+	pix2 := q.buffer.data
+	pix3 := q.markData.data
+	q.pixXY = q.pixXY[:0]
+	q.markBuffXY = q.markBuffXY[:0]
+	q.markDataXY = q.markDataXY[:0]
+	for i := 0; i < qrCodeSizeTable[q.strEnc.version]; i++ {
+		q.pixXY = append(q.pixXY, pix1[:qrCodeSizeTable[q.strEnc.version]])
+		pix1 = pix1[qrCodeSizeTable[q.strEnc.version]+8:]
+		q.markBuffXY = append(q.markBuffXY, pix2[:qrCodeSizeTable[q.strEnc.version]])
+		pix2 = pix2[qrCodeSizeTable[q.strEnc.version]:]
+		q.markDataXY = append(q.markDataXY, pix3[:qrCodeSizeTable[q.strEnc.version]])
+		pix3 = pix3[qrCodeSizeTable[q.strEnc.version]:]
+	}
+	// 开始画图
 	q.drawFinderPatterns()
 	q.drawTimingPatterns()
 	q.drawAlignmentPatterns()
 	q.drawBottomLeftPoint()
 	q.drawData()
 	q.mark()
-	q.drawFormat()
-	q.drawVersion()
-	return q.pix
+	q.drawFormatInformation()
+	q.drawVersionInformation()
 }
 
 // 画点
@@ -1168,49 +1156,54 @@ func (q *qrCode) drawPoint(x, y int, c uint8) {
 }
 
 // 画矩形
-func (q *qrCode) drawRectangle(x1, y1, x2, y2 int, c uint8, fill bool) {
-	if fill {
-		for i := y1; i <= y2; i++ {
-			for j := x1; j <= x2; j++ {
-				q.drawPoint(j, i, c)
-			}
-		}
-		return
-	}
+func (q *qrCode) drawRectangle(x1, y1, x2, y2 int, c uint8) {
 	// 上下
-	for i := x1; i <= x2; i++ {
-		q.drawPoint(i, y1, c)
-		q.drawPoint(i, y2, c)
+	for x := x1; x <= x2; x++ {
+		q.drawPoint(x, y1, c)
+		q.drawPoint(x, y2, c)
 	}
 	// 左右
-	for i := y1 + 1; i < y2; i++ {
-		q.drawPoint(x1, i, c)
-		q.drawPoint(x2, i, c)
+	for y := y1 + 1; y < y2; y++ {
+		q.drawPoint(x1, y, c)
+		q.drawPoint(x2, y, c)
+	}
+}
+
+// 画矩形
+func (q *qrCode) drawSolidRectangle(x1, y1, x2, y2 int, c uint8) {
+	for y := y1; y <= y2; y++ {
+		for x := x1; x <= x2; x++ {
+			q.drawPoint(x, y, c)
+		}
 	}
 }
 
 // finder patterns
 func (q *qrCode) drawFinderPatterns() {
 	// 左上角
-	q.drawRectangle(0, 0, 6, 6, _paletteBlack, false)
-	q.drawRectangle(2, 2, 4, 4, _paletteBlack, true)
+	q.drawRectangle(0, 0, 6, 6, _paletteBlack)
+	q.drawSolidRectangle(2, 2, 4, 4, _paletteBlack)
 	// 右上角
-	q.drawRectangle(qrCodeSizeTable[q.strEncoder.version]-7, 0, qrCodeSizeTable[q.strEncoder.version]-1, 6, _paletteBlack, false)
-	q.drawRectangle(qrCodeSizeTable[q.strEncoder.version]-5, 2, qrCodeSizeTable[q.strEncoder.version]-3, 4, _paletteBlack, true)
+	q.drawRectangle(qrCodeSizeTable[q.strEnc.version]-7, 0,
+		qrCodeSizeTable[q.strEnc.version]-1, 6, _paletteBlack)
+	q.drawSolidRectangle(qrCodeSizeTable[q.strEnc.version]-5, 2,
+		qrCodeSizeTable[q.strEnc.version]-3, 4, _paletteBlack)
 	// 左下角
-	q.drawRectangle(0, qrCodeSizeTable[q.strEncoder.version]-7, 6, qrCodeSizeTable[q.strEncoder.version]-1, _paletteBlack, false)
-	q.drawRectangle(2, qrCodeSizeTable[q.strEncoder.version]-5, 4, qrCodeSizeTable[q.strEncoder.version]-3, _paletteBlack, true)
+	q.drawRectangle(0, qrCodeSizeTable[q.strEnc.version]-7, 6,
+		qrCodeSizeTable[q.strEnc.version]-1, _paletteBlack)
+	q.drawSolidRectangle(2, qrCodeSizeTable[q.strEnc.version]-5, 4,
+		qrCodeSizeTable[q.strEnc.version]-3, _paletteBlack)
 }
 
 // timing patterns
 func (q *qrCode) drawTimingPatterns() {
 	// 水平
-	for i := 8; i < qrCodeSizeTable[q.strEncoder.version]-8; {
+	for i := 8; i < qrCodeSizeTable[q.strEnc.version]-8; {
 		q.drawPoint(i, 6, _paletteBlack)
 		i += 2
 	}
 	// 垂直
-	for i := 8; i < qrCodeSizeTable[q.strEncoder.version]-8; {
+	for i := 8; i < qrCodeSizeTable[q.strEnc.version]-8; {
 		q.drawPoint(6, i, _paletteBlack)
 		i += 2
 	}
@@ -1218,8 +1211,8 @@ func (q *qrCode) drawTimingPatterns() {
 
 // alignment patterns，
 func (q *qrCode) drawAlignmentPatterns() {
-	for _, r := range alignmentPatternTable[q.strEncoder.version] {
-		q.drawRectangle(r.Min.X, r.Min.Y, r.Max.X, r.Max.Y, _paletteBlack, false)
+	for _, r := range alignmentPatternTable[q.strEnc.version] {
+		q.drawRectangle(r.Min.X, r.Min.Y, r.Max.X, r.Max.Y, _paletteBlack)
 		q.drawPoint(r.Min.X+2, r.Min.Y+2, _paletteBlack)
 	}
 }
@@ -1227,12 +1220,12 @@ func (q *qrCode) drawAlignmentPatterns() {
 // 左下角，格式信息上的一个黑点
 func (q *qrCode) drawBottomLeftPoint() {
 	// y=version*4+4+9，
-	q.drawPoint(8, int(q.strEncoder.version)*4+13, _paletteBlack)
+	q.drawPoint(8, int(q.strEnc.version)*4+13, _paletteBlack)
 }
 
 // 格式信息
-func (q *qrCode) drawFormat() {
-	f := formatBitTable[q.strEncoder.Level][q.markNum]
+func (q *qrCode) drawFormatInformation() {
+	f := formatBitTable[q.strEnc.Level][q.markNum]
 	idx := 0
 	// 左上角
 	for x := 0; x < 6; x++ {
@@ -1261,14 +1254,14 @@ func (q *qrCode) drawFormat() {
 	}
 	idx = 0
 	// 左下角
-	for y := qrCodeSizeTable[q.strEncoder.version] - 1; y > qrCodeSizeTable[q.strEncoder.version]-8; y-- {
+	for y := qrCodeSizeTable[q.strEnc.version] - 1; y > qrCodeSizeTable[q.strEnc.version]-8; y-- {
 		if f[idx] == 1 {
 			q.drawPoint(8, y, _paletteBlack)
 		}
 		idx++
 	}
 	// 右上角
-	for x := qrCodeSizeTable[q.strEncoder.version] - 8; x <= qrCodeSizeTable[q.strEncoder.version]-1; x++ {
+	for x := qrCodeSizeTable[q.strEnc.version] - 8; x <= qrCodeSizeTable[q.strEnc.version]-1; x++ {
 		if f[idx] == 1 {
 			q.drawPoint(x, 8, _paletteBlack)
 		}
@@ -1277,13 +1270,13 @@ func (q *qrCode) drawFormat() {
 }
 
 // 版本信息
-func (q *qrCode) drawVersion() {
-	if q.strEncoder.version < version7 {
+func (q *qrCode) drawVersionInformation() {
+	if q.strEnc.version < version7 {
 		return
 	}
-	ver := versionBitTable[q.strEncoder.version]
-	x := qrCodeSizeTable[q.strEncoder.version] - 11
-	y := qrCodeSizeTable[q.strEncoder.version] - 8
+	ver := versionBitTable[q.strEnc.version]
+	x := qrCodeSizeTable[q.strEnc.version] - 11
+	y := qrCodeSizeTable[q.strEnc.version] - 8
 	idx := 0
 	for i := 0; i < 6; i++ {
 		for j := 0; j < 3; j++ {
@@ -1301,21 +1294,20 @@ func (q *qrCode) drawVersion() {
 // 数据
 func (q *qrCode) drawData() {
 	// 从右下角开始
-	x := qrCodeSizeTable[q.strEncoder.version] - 1
-	y := qrCodeSizeTable[q.strEncoder.version] - 1
-	// finder patterns，左上0，右上1，左下2
-	finderPatterns := [3]image.Point{{9, 9}, {x - 8, 9}, {9, y - 8}}
-	// align patterns 矩形
-	alignPatterns := alignmentPatternTable[q.strEncoder.version]
-	// timing patterns
-	timingPatterns := image.Point{X: 6, Y: 6}
-	// version patterns，0右上x，1左下y
-	versionPatterns := image.Point{X: finderPatterns[1].X - 3, Y: finderPatterns[2].Y - 3}
+	x := qrCodeSizeTable[q.strEnc.version] - 1
+	y := qrCodeSizeTable[q.strEnc.version] - 1
+	// finder patterns，左上0，右上1，左下2，包括format+1区域，
+	corner := [3]image.Point{{9, 9}, {x - 8, 9}, {9, y - 8}}
+	// alignment patterns 矩形
+	alignment := alignmentPatternTable[q.strEnc.version]
+	// version information area，0右上的X，1左下的Y
+	versionArea := [2]int{corner[1].X - 2, corner[2].Y - 2}
+	// 画
 	idx := 0
 	bit := byte(0b10000000)
-	char := q.eccEncoder.data[idx]
+	char := q.eccEnc.data[idx]
 	up := true
-	setColor := func() bool {
+	drawPoint := func() bool {
 		if char&bit != 0 {
 			q.drawPoint(x, y, _paletteBlack)
 		}
@@ -1323,10 +1315,10 @@ func (q *qrCode) drawData() {
 		if bit == 0 {
 			bit = 0b10000000
 			idx++
-			if idx == len(q.eccEncoder.data) {
+			if idx == len(q.eccEnc.data) {
 				return false
 			}
-			char = q.eccEncoder.data[idx]
+			char = q.eccEnc.data[idx]
 		}
 		return true
 	}
@@ -1334,27 +1326,33 @@ Loop:
 	for {
 		if up {
 			// 右点
-			if !setColor() {
-				break Loop
+			if !drawPoint() {
+				return
 			}
 			// 左点
 			x--
-			if !setColor() {
-				break Loop
+			if !drawPoint() {
+				return
 			}
-			// finder patterns
-			if y == finderPatterns[1].Y {
+			// 上边缘
+			if y == 0 {
+				x--
+				up = !up
+				continue Loop
+			}
+			// 角落
+			if y == corner[1].Y {
 				// 右上
-				if x > finderPatterns[1].X {
+				if x > corner[1].X {
 					x--
 					up = !up
 					continue Loop
 				}
 				// 左上
-				if x < finderPatterns[0].X {
+				if x < corner[0].X {
 					x--
 					// timing patterns，垂直
-					if x == timingPatterns.X {
+					if x == verticalTimingPattern {
 						x--
 					}
 					up = !up
@@ -1362,15 +1360,17 @@ Loop:
 				}
 				// 左下，不可能
 			}
+			// 上移
+			y--
 			// timing patterns，水平
-			if y == timingPatterns.Y {
+			if y == horizontalTimingPattern {
 				// 版本7以上
-				if q.strEncoder.version >= 6 && x > versionPatterns.X {
+				if q.strEnc.version >= version7 && x > versionArea[0] {
 					// 右上版本区左边向下
 					x -= 2
 					y = 0
 					for i := 0; i < 6; i++ {
-						if !setColor() {
+						if !drawPoint() {
 							break Loop
 						}
 						y++
@@ -1380,26 +1380,17 @@ Loop:
 					up = !up
 					continue Loop
 				}
+				// 上移
+				y--
 			}
-			// 上边缘
-			if y == 0 {
-				x--
-				if x < finderPatterns[0].X {
-					y = finderPatterns[0].Y
-				}
-				up = !up
-				continue Loop
-			}
-			// 上移
-			y--
 			// 检查alignment patterns
-			for _, r := range alignPatterns {
+			for _, r := range alignment {
 				if y == r.Max.Y {
 					// 右边向上
 					if x == r.Max.X {
 						x++
 						for i := 0; i < 5; i++ {
-							if !setColor() {
+							if !drawPoint() {
 								break Loop
 							}
 							y--
@@ -1420,7 +1411,7 @@ Loop:
 					// 左边向上
 					if x == r.Min.X-1 {
 						for i := 0; i < 5; i++ {
-							if !setColor() {
+							if !drawPoint() {
 								break Loop
 							}
 							y--
@@ -1438,34 +1429,33 @@ Loop:
 			x++
 		} else {
 			// 右点
-			if !setColor() {
+			if !drawPoint() {
 				break Loop
 			}
 			// 左点
 			x--
-			if !setColor() {
+			if !drawPoint() {
 				break Loop
 			}
-			// finder patterns
-			if x < timingPatterns.X {
+			if x < verticalTimingPattern {
 				// 左下
-				if q.strEncoder.version >= 6 {
-					if y == versionPatterns.Y {
+				if q.strEnc.version >= 6 {
+					if y == versionArea[1] {
 						x--
 						up = !up
 						continue Loop
 					}
 				} else {
-					if y == finderPatterns[2].Y {
+					if y == corner[2].Y {
 						x--
 						up = !up
 						continue Loop
 					}
 				}
-			} else if x < finderPatterns[2].X {
-				if y == finderPatterns[2].Y {
+			} else if x < corner[2].X {
+				if y == corner[2].Y {
 					x--
-					if x == timingPatterns.X {
+					if x == verticalTimingPattern {
 						x--
 					}
 					up = !up
@@ -1475,19 +1465,19 @@ Loop:
 			// 下移
 			y++
 			// timing patterns，水平
-			if y == timingPatterns.Y {
+			if y == horizontalTimingPattern {
 				x++
 				y++
 				continue Loop
 			}
 			// alignment patterns
-			for _, r := range alignPatterns {
+			for _, r := range alignment {
 				if y == r.Min.Y {
 					// 右边向下
 					if x == r.Max.X {
 						x++
 						for i := 0; i < 5; i++ {
-							if !setColor() {
+							if !drawPoint() {
 								break Loop
 							}
 							y++
@@ -1508,7 +1498,7 @@ Loop:
 					// 左边向下
 					if x == r.Min.X-1 {
 						for i := 0; i < 5; i++ {
-							if !setColor() {
+							if !drawPoint() {
 								break Loop
 							}
 							y++
@@ -1524,14 +1514,14 @@ Loop:
 				}
 			}
 			// 下边缘
-			if y == qrCodeSizeTable[q.strEncoder.version] {
+			if y == qrCodeSizeTable[q.strEnc.version] {
 				// 左移
 				x--
-				if x < finderPatterns[2].X {
+				if x < corner[2].X {
 					// 左下角
-					y = finderPatterns[2].Y - 1
+					y = corner[2].Y - 1
 				} else {
-					y = qrCodeSizeTable[q.strEncoder.version] - 1
+					y = qrCodeSizeTable[q.strEnc.version] - 1
 				}
 				// 向下
 				up = !up
@@ -1546,87 +1536,112 @@ Loop:
 func (q *qrCode) mark() {
 	// 以下是不能mark的区域
 	finderPatterns := [3]image.Rectangle{
-		{Max: image.Point{X: 8, Y: 8}}, // 左上
-		{Min: image.Point{X: qrCodeSizeTable[q.strEncoder.version] - 8}, Max: image.Point{X: qrCodeSizeTable[q.strEncoder.version] - 1, Y: 8}}, // 右上
-		{Min: image.Point{Y: qrCodeSizeTable[q.strEncoder.version] - 8}, Max: image.Point{X: 8, Y: qrCodeSizeTable[q.strEncoder.version] - 1}}, // 左下
+		{
+			Max: image.Point{X: 8, Y: 8},
+		}, // 左上
+		{
+			Min: image.Point{X: qrCodeSizeTable[q.strEnc.version] - 8},
+			Max: image.Point{X: qrCodeSizeTable[q.strEnc.version] - 1, Y: 8},
+		}, // 右上
+		{
+			Min: image.Point{Y: qrCodeSizeTable[q.strEnc.version] - 8},
+			Max: image.Point{X: 8, Y: qrCodeSizeTable[q.strEnc.version] - 1},
+		}, // 左下
 	}
-	timingPatterns := image.Point{X: 6, Y: 6}
-	alignPatterns := alignmentPatternTable[q.strEncoder.version]
-	versionArea := image.Rectangle{}
-	// 版本大于7才有区域
-	if q.strEncoder.version >= version7 {
-		versionArea.Min.X = finderPatterns[1].Min.X - 3
-		versionArea.Min.Y = 5
-		versionArea.Max.Y = 5
+	alignmentPatterns := alignmentPatternTable[q.strEnc.version]
+	versionArea := [2]image.Rectangle{
+		{
+			Min: image.Point{X: finderPatterns[1].Min.X - 3},
+			Max: image.Point{X: finderPatterns[1].Min.X - 1, Y: 5},
+		}, // 右上
+		{
+			Min: image.Point{Y: finderPatterns[2].Min.Y - 3},
+			Max: image.Point{X: 5, Y: finderPatterns[1].Min.X - 1},
+		}, // 左下
 	}
 	// 得分
 	score, minScore := 0, 0xffffffff
-	idx := -1
-	// 8种mark的方法
-	for i := 0; i < maxMark; i++ {
-		// 原始数据
-		copy(q.buffer.data, q.pix)
-		// 逐行
+	// 生成mark图
+	for i := 0; i < 1; i++ {
 		for y := 0; y < len(q.pixXY); y++ {
 		Next:
 			for x := 0; x < len(q.pixXY[y]); x++ {
-				idx++
 				// finder patterns
-				for i := 0; i < len(finderPatterns); i++ {
-					if x >= finderPatterns[i].Min.X && y <= finderPatterns[i].Max.Y {
+				for j := 0; j < len(finderPatterns); j++ {
+					if x >= finderPatterns[j].Min.X && x <= finderPatterns[j].Max.X &&
+						y >= finderPatterns[j].Min.Y && y <= finderPatterns[j].Max.Y {
+						q.markBuffXY[y][x] = q.pixXY[y][x]
 						continue Next
 					}
 				}
 				// timing patterns
-				if x == timingPatterns.X || y == timingPatterns.Y {
+				if x == horizontalTimingPattern || y == verticalTimingPattern {
+					q.markBuffXY[y][x] = q.pixXY[y][x]
 					continue Next
 				}
 				// alignment patterns
-				for i := 0; i < len(alignPatterns); i++ {
-					if x >= alignPatterns[i].Min.X && y <= alignPatterns[i].Max.Y {
+				for j := 0; j < len(alignmentPatterns); j++ {
+					if x >= alignmentPatterns[j].Min.X && x <= alignmentPatterns[j].Max.X &&
+						y >= alignmentPatterns[j].Min.Y && y <= alignmentPatterns[j].Max.Y {
+						q.markBuffXY[y][x] = q.pixXY[y][x]
 						continue Next
 					}
 				}
-				// 每种mark都有相应的计算公式
-				if markFunc[i](x, y) {
-					// 反色
-					if q.buffer.data[idx] == _paletteBlack {
-						q.buffer.data[idx] = _paletteWhite
-					} else {
-						q.buffer.data[idx] = _paletteBlack
+				// version information
+				if q.strEnc.version >= version7 {
+					for j := 0; j < len(versionArea); j++ {
+						if x >= versionArea[j].Min.X && x <= versionArea[j].Max.X &&
+							y >= versionArea[j].Min.Y && y <= versionArea[j].Max.Y {
+							q.markBuffXY[y][x] = q.pixXY[y][x]
+							continue Next
+						}
 					}
+				}
+				if markFunc[i](x, y) {
+					q.markBuffXY[y][x] = _paletteBlack ^ q.pixXY[y][x]
+					//q.markBuffXY[y][x] = _paletteBlack
+				} else {
+					q.markBuffXY[y][x] = _paletteWhite ^ q.pixXY[y][x]
+					//q.markBuffXY[y][x] = _paletteWhite
 				}
 			}
 		}
 		// 评估
-		q.initMarkXY()
 		score = q.evaluation1() + q.evaluation2() + q.evaluation3() + q.evaluation4()
 		// 最小得分
 		if score < minScore {
 			minScore = score
-			// 保存mark后的数据和mark编码
-			copy(q.markData.data, q.buffer.data)
 			q.markNum = i
+			t1 := q.markBuffXY
+			q.markBuffXY = q.markDataXY
+			q.markDataXY = t1
+			t2 := q.buffer.data
+			q.buffer.data = q.markData.data
+			q.markData.data = t2
 		}
-		idx = -1
 	}
 	// 最终的数据
-	copy(q.pix, q.markData.data)
+	for y := 0; y < len(q.markDataXY); y++ {
+		copy(q.pixXY[y], q.markDataXY[y])
+	}
+	//for y := 0; y < len(q.markBuffXY); y++ {
+	//	copy(q.pixXY[y], q.markBuffXY[y])
+	//}
 }
 
 // 找到5个连续颜色的点，+3分
 // 5个连续颜色的点之后，每多1个点+1分
 func (q *qrCode) evaluation1() int {
-	data := q.buffer.data
 	score := 0
 	var lastBlock uint8
 	var consecutive int
+	x, y := 0, 0
 	// 行
-	for y := 0; y < qrCodeSizeTable[q.strEncoder.version]; y++ {
+	for ; y < len(q.markBuffXY); y++ {
 		consecutive = 0
-		lastBlock = data[0]
-		for x := 1; x < qrCodeSizeTable[q.strEncoder.version]; x++ {
-			if data[x] == lastBlock {
+		lastBlock = q.markBuffXY[y][0]
+		for x = 1; x < len(q.markBuffXY[y]); x++ {
+			if q.markBuffXY[y][x] == lastBlock {
 				consecutive++
 				if consecutive == 5 {
 					score += 3
@@ -1634,21 +1649,18 @@ func (q *qrCode) evaluation1() int {
 					score++
 				}
 			} else {
-				lastBlock = data[x]
+				lastBlock = q.markBuffXY[y][x]
 				consecutive = 0
 			}
 		}
-		data = data[qrCodeSizeTable[q.strEncoder.version]:]
 	}
 	// 列
-	data = q.buffer.data
-	idx := 0
-	for i := 0; i < qrCodeSizeTable[q.strEncoder.version]; i++ {
+	x = 0
+	for ; x < len(q.markBuffXY[0]); x++ {
 		consecutive = 0
-		lastBlock = data[i]
-		idx = i
-		for j := 0; j < qrCodeSizeTable[q.strEncoder.version]; j++ {
-			if data[idx] == lastBlock {
+		lastBlock = q.markBuffXY[0][x]
+		for y = 1; y < len(q.markBuffXY); y++ {
+			if q.markBuffXY[y][x] == lastBlock {
 				consecutive++
 				if consecutive == 5 {
 					score += 3
@@ -1656,10 +1668,9 @@ func (q *qrCode) evaluation1() int {
 					score++
 				}
 			} else {
-				lastBlock = data[idx]
+				lastBlock = q.markBuffXY[y][x]
 				consecutive = 0
 			}
-			idx += qrCodeSizeTable[q.strEncoder.version]
 		}
 	}
 	return score
@@ -1668,20 +1679,15 @@ func (q *qrCode) evaluation1() int {
 // 找到相同颜色的最小矩形（2*2），+3分
 func (q *qrCode) evaluation2() int {
 	score := 0
-	for y := 0; y < qrCodeSizeTable[q.strEncoder.version]-1; y++ {
-		i := 0
-		for x := 0; x < qrCodeSizeTable[q.strEncoder.version]-1; x++ {
-			i1 := i + x
-			i2 := i1 + 1
-			i3 := i1 + qrCodeSizeTable[q.strEncoder.version]
-			i4 := i2 + qrCodeSizeTable[q.strEncoder.version]
-			if q.buffer.data[i1] == q.buffer.data[i2] &&
-				q.buffer.data[i1] == q.buffer.data[i3] &&
-				q.buffer.data[i1] == q.buffer.data[i4] {
+	x, y := 0, 0
+	for ; y < len(q.markBuffXY)-1; y++ {
+		for ; x < len(q.markBuffXY[y])-1; x++ {
+			if q.markBuffXY[y][x] == q.markBuffXY[y][x+1] &&
+				q.markBuffXY[y][x] == q.markBuffXY[y+1][x] &&
+				q.markBuffXY[y][x] == q.markBuffXY[y+1][x+1] {
 				score += 3
 			}
 		}
-		i += qrCodeSizeTable[q.strEncoder.version]
 	}
 	return score
 }
@@ -1689,29 +1695,51 @@ func (q *qrCode) evaluation2() int {
 // 找到[10111010000]或者[00001011101]，+40分
 func (q *qrCode) evaluation3() int {
 	score := 0
-	b := evaluation3Bytes[0]
-	d := q.buffer.data
+	x, y, n, m := 0, 0, 0, 0
 	o := true
-	for y := 0; y < qrCodeSizeTable[q.strEncoder.version]; y++ {
-		for x := 0; x < qrCodeSizeTable[q.strEncoder.version]-len(b); {
+	// 行
+	m = len(q.markBuffXY[0]) - len(evaluation3Bytes[0]) - 1
+	for ; y < len(q.markBuffXY); y++ {
+		for x < m {
 			o = true
-			for i := 0; i < len(b); i++ {
-				if b[i] != d[i] {
+			n = x
+			for _, c := range evaluation3Bytes[0] {
+				if c != q.markBuffXY[y][n] {
 					o = false
 					break
 				}
+				n++
 			}
 			if o {
 				score += 40
-				x += len(b)
+				x += len(evaluation3Bytes[0])
 			} else {
 				x++
 			}
 		}
+		x = 0
 	}
-	b = evaluation3Bytes[1]
-	for x := 0; x < qrCodeSizeTable[q.strEncoder.version]; x++ {
-		for y := 0; y < qrCodeSizeTable[q.strEncoder.version]-len(b); y++ {
+	// 列
+	m = len(q.markBuffXY) - len(evaluation3Bytes[1]) - 1
+	x = 0
+	for ; x < len(q.markBuffXY[0]); x++ {
+		y = 0
+		for y < m {
+			o = true
+			n = y
+			for _, c := range evaluation3Bytes[1] {
+				if c != q.markBuffXY[n][x] {
+					o = false
+					break
+				}
+				n++
+			}
+			if o {
+				score += 40
+				y += len(evaluation3Bytes[1])
+			} else {
+				y++
+			}
 		}
 	}
 	return score
