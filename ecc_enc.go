@@ -344,7 +344,7 @@ func (e *eccEncoder) Encode(data []byte, version version, level Level) {
 		e.buff.Resize(len(e.data), -1)
 		// 二维表
 		e.xy = e.xy[:0]
-		p = data
+		p = e.data
 		for i := 0; i < ec.Group1Block; i++ {
 			e.xy = append(e.xy, p[:ec.Group1BlockBytes])
 			p = p[ec.Group1BlockBytes:]
@@ -369,12 +369,8 @@ func (e *eccEncoder) Encode(data []byte, version version, level Level) {
 		}
 		// 纠错码交错
 		e.xy = e.xy[:0]
-		p = e.data[len(data):]
+		p = e.data[idx:]
 		for i := 0; i < (ec.Group1Block + ec.Group2Block); i++ {
-			e.xy = append(e.xy, p[:ec.BlockECBytes])
-			p = data[ec.BlockECBytes:]
-		}
-		for i := 0; i < ec.Group2Block; i++ {
 			e.xy = append(e.xy, p[:ec.BlockECBytes])
 			p = p[ec.BlockECBytes:]
 		}
