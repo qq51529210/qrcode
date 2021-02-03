@@ -15,9 +15,8 @@ import (
 )
 
 const (
-	maxMark                 = 8
-	horizontalTimingPattern = 6
-	verticalTimingPattern   = 6
+	maxMark       = 8
+	timingPattern = 6
 )
 
 var (
@@ -1296,12 +1295,14 @@ func (q *qrCode) drawData() {
 	// 从右下角开始
 	x := qrCodeSizeTable[q.strEnc.version] - 1
 	y := qrCodeSizeTable[q.strEnc.version] - 1
-	// finder patterns，左上0，右上1，左下2，包括format+1区域，
-	corner := [3]image.Point{{9, 9}, {x - 8, 9}, {9, y - 8}}
-	// alignment patterns 矩形
-	alignment := alignmentPatternTable[q.strEnc.version]
-	// version information area，0右上的X，1左下的Y
-	versionArea := [2]int{corner[1].X - 2, corner[2].Y - 2}
+	// finder patterns，包括format区域
+	topCornerMaxY := 9
+	leftCornerMaxX := 9
+	leftBottomCornerMinY := y - 8
+	rightTopCornerMinX := x - 8
+	// version information area
+	topVersionMinX := rightTopCornerMinX - 3
+	bottomVersionMinY := leftBottomCornerMinY - 3
 	// 画
 	idx := 0
 	bit := byte(0b10000000)
@@ -1334,25 +1335,25 @@ Loop:
 			if !drawPoint() {
 				return
 			}
-			// 上边缘
+			// 顶部
 			if y == 0 {
 				x--
 				up = !up
 				continue Loop
 			}
-			// 角落
-			if y == corner[1].Y {
+			// finder patterns
+			if y == topCornerMaxY {
 				// 右上
-				if x > corner[1].X {
+				if x > rightTopCornerMinX {
 					x--
 					up = !up
 					continue Loop
 				}
 				// 左上
-				if x < corner[0].X {
+				if x < leftCornerMaxX {
 					x--
 					// timing patterns，垂直
-					if x == verticalTimingPattern {
+					if x == timingPattern {
 						x--
 					}
 					up = !up
@@ -1362,29 +1363,8 @@ Loop:
 			}
 			// 上移
 			y--
-			// timing patterns，水平
-			if y == horizontalTimingPattern {
-				// 版本7以上
-				if q.strEnc.version >= version7 && x > versionArea[0] {
-					// 右上版本区左边向下
-					x -= 2
-					y = 0
-					for i := 0; i < 6; i++ {
-						if !drawPoint() {
-							break Loop
-						}
-						y++
-					}
-					x++
-					y++
-					up = !up
-					continue Loop
-				}
-				// 上移
-				y--
-			}
 			// 检查alignment patterns
-			for _, r := range alignment {
+			for _, r := range alignmentPatternTable[q.strEnc.version] {
 				if y == r.Max.Y {
 					// 右边向上
 					if x == r.Max.X {
@@ -1395,7 +1375,7 @@ Loop:
 							}
 							y--
 							// timing patterns，水平
-							if y == 6 {
+							if y == timingPattern {
 								i++
 								y--
 							}
@@ -1416,7 +1396,7 @@ Loop:
 							}
 							y--
 							// timing patterns，水平
-							if y == 6 {
+							if y == timingPattern {
 								i++
 								y--
 							}
@@ -1425,6 +1405,27 @@ Loop:
 						continue Loop
 					}
 				}
+			}
+			// timing patterns，水平
+			if y == timingPattern {
+				// 版本7以上
+				if q.strEnc.version >= version7 && x > topVersionMinX {
+					// 右上版本区左边向下
+					x -= 2
+					y = 0
+					for i := 0; i < 6; i++ {
+						if !drawPoint() {
+							break Loop
+						}
+						y++
+					}
+					x++
+					y++
+					up = !up
+					continue Loop
+				}
+				// 上移
+				y--
 			}
 			x++
 		} else {
@@ -1437,41 +1438,33 @@ Loop:
 			if !drawPoint() {
 				break Loop
 			}
-			if x < verticalTimingPattern {
+			// 最左边
+			if x < timingPattern {
 				// 左下
-				if q.strEnc.version >= 6 {
-					if y == versionArea[1] {
+				if q.strEnc.version >= version7 {
+					if y == bottomVersionMinY {
 						x--
 						up = !up
 						continue Loop
 					}
 				} else {
-					if y == corner[2].Y {
+					if y == leftBottomCornerMinY {
 						x--
 						up = !up
 						continue Loop
 					}
 				}
-			} else if x < corner[2].X {
-				if y == corner[2].Y {
-					x--
-					if x == verticalTimingPattern {
-						x--
-					}
-					up = !up
-					continue Loop
-				}
 			}
 			// 下移
 			y++
 			// timing patterns，水平
-			if y == horizontalTimingPattern {
+			if y == timingPattern {
 				x++
 				y++
 				continue Loop
 			}
-			// alignment patterns
-			for _, r := range alignment {
+			// 检查alignment patterns
+			for _, r := range alignmentPatternTable[q.strEnc.version] {
 				if y == r.Min.Y {
 					// 右边向下
 					if x == r.Max.X {
@@ -1482,7 +1475,7 @@ Loop:
 							}
 							y++
 							// timing patterns，水平
-							if y == 6 {
+							if y == timingPattern {
 								i++
 								y++
 							}
@@ -1503,7 +1496,7 @@ Loop:
 							}
 							y++
 							// timing patterns，水平
-							if y == 6 {
+							if y == timingPattern {
 								i++
 								y++
 							}
@@ -1513,15 +1506,15 @@ Loop:
 					}
 				}
 			}
-			// 下边缘
+			// 底部
 			if y == qrCodeSizeTable[q.strEnc.version] {
 				// 左移
 				x--
-				if x < corner[2].X {
+				if x < leftCornerMaxX {
 					// 左下角
-					y = corner[2].Y - 1
+					y = leftBottomCornerMinY
 				} else {
-					y = qrCodeSizeTable[q.strEnc.version] - 1
+					y--
 				}
 				// 向下
 				up = !up
@@ -1575,7 +1568,7 @@ func (q *qrCode) mark() {
 					}
 				}
 				// timing patterns
-				if x == horizontalTimingPattern || y == verticalTimingPattern {
+				if x == timingPattern || y == timingPattern {
 					q.markBuffXY[y][x] = q.pixXY[y][x]
 					continue Next
 				}
