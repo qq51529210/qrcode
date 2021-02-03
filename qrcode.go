@@ -1555,7 +1555,7 @@ func (q *qrCode) mark() {
 	// 得分
 	score, minScore := 0, 0xffffffff
 	// 生成mark图
-	for i := 0; i < 1; i++ {
+	for i := 0; i < maxMark; i++ {
 		for y := 0; y < len(q.pixXY); y++ {
 		Next:
 			for x := 0; x < len(q.pixXY[y]); x++ {
@@ -1617,9 +1617,6 @@ func (q *qrCode) mark() {
 	for y := 0; y < len(q.markDataXY); y++ {
 		copy(q.pixXY[y], q.markDataXY[y])
 	}
-	//for y := 0; y < len(q.markBuffXY); y++ {
-	//	copy(q.pixXY[y], q.markBuffXY[y])
-	//}
 }
 
 // 找到5个连续颜色的点，+3分
